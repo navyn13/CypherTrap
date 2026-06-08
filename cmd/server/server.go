@@ -24,7 +24,7 @@ func (s *Server) StartServer() error {
 		log.Fatal(err)
 	}
 	s.ln = ln
-	slog.Info("GoKV Server Running", "listenAddr", s.ListenAddr)
+	slog.Info("CypherTrap Server Running", "listenAddr", s.ListenAddr)
 	return nil
 }
 
