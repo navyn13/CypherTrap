@@ -22,8 +22,14 @@ func main() {
 	config := Config{
 		ListenAddr: os.Getenv("PORT"),
 	}
-	server := NewServer(config)
-	server.StartServer()
+	rdb, err := NewRedisClient()
+	if err != nil {
+		log.Fatal(err)
+	}
+	server := NewServer(config, rdb)
+	if err := server.StartServer(); err != nil {
+		log.Fatal(err)
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)

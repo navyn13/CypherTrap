@@ -4,6 +4,8 @@ import (
 	"log"
 	"log/slog"
 	"net"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Config struct {
@@ -11,11 +13,12 @@ type Config struct {
 }
 type Server struct {
 	Config
-	ln net.Listener
+	ln  net.Listener
+	rdb *redis.Client
 }
 
-func NewServer(cfg Config) *Server {
-	return &Server{Config: cfg}
+func NewServer(cfg Config, rdb *redis.Client) *Server {
+	return &Server{Config: cfg, rdb: rdb}
 }
 func (s *Server) StartServer() error {
 	ln, err := net.Listen("tcp", s.ListenAddr)
@@ -28,5 +31,10 @@ func (s *Server) StartServer() error {
 }
 
 func (s *Server) Shutdown() {
-	s.ln.Close()
+	if s.ln != nil {
+		s.ln.Close()
+	}
+	if s.rdb != nil {
+		s.rdb.Close()
+	}
 }
