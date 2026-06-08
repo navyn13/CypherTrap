@@ -11,12 +11,11 @@ type Config struct {
 }
 type Server struct {
 	Config
-	ln     net.Listener
-	quitCh chan struct{}
+	ln net.Listener
 }
 
 func NewServer(cfg Config) *Server {
-	return &Server{Config: cfg, quitCh: make(chan struct{})}
+	return &Server{Config: cfg}
 }
 func (s *Server) StartServer() error {
 	ln, err := net.Listen("tcp", s.ListenAddr)
@@ -29,6 +28,5 @@ func (s *Server) StartServer() error {
 }
 
 func (s *Server) Shutdown() {
-	close(s.quitCh)
 	s.ln.Close()
 }
