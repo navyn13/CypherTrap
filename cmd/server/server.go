@@ -5,6 +5,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -70,8 +71,18 @@ func (s *Server) loop() {
 	}
 }
 func (s *Server) handleMessage(msg Message) error {
-	fmt.Printf("Message is recieved: %s\n", msg.Msg)
+	parts := strings.Fields(msg.Msg)
+
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid message")
+	}
+	command := parts[0]
+	ip := parts[1]
+	fmt.Println("Command:", command)
+	fmt.Println("IP:", ip)
+
 	return nil
+
 }
 
 func (s *Server) acceptLoop() error {
