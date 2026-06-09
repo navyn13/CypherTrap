@@ -27,6 +27,7 @@ type Server struct {
 	peers     map[*Peer]bool
 	quitCh    chan struct{}
 	msgCh     chan Message
+	algorithm Algorithm
 }
 
 func NewServer(cfg Config, rdb *redis.Client) *Server {
@@ -35,7 +36,9 @@ func NewServer(cfg Config, rdb *redis.Client) *Server {
 		addPeerCh: make(chan *Peer),
 		peers:     make(map[*Peer]bool),
 		quitCh:    make(chan struct{}),
-		msgCh:     make(chan Message)}
+		msgCh:     make(chan Message),
+		algorithm: NewFixedWindowAlgorithm(5),
+	}
 }
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.ListenAddr)
@@ -81,8 +84,18 @@ func (s *Server) handleMessage(msg Message) error {
 	fmt.Println("Command:", command)
 	fmt.Println("IP:", ip)
 
+	switch command {
+	case "ALLOW":
+		algorithm := s.algorithm
+		if algorithm.Check(ip) {
+			msg.Peer.conn.Write([]byte("ALLOWED\n"))
+		} else {
+			msg.Peer.conn.Write([]byte("BLOCKED\n"))
+		}
+	default:
+		return fmt.Errorf("unknown command: %s", command)
+	}
 	return nil
-
 }
 
 func (s *Server) acceptLoop() error {
