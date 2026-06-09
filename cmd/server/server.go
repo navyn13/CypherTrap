@@ -13,21 +13,25 @@ type Config struct {
 }
 type Server struct {
 	Config
-	ln  net.Listener
-	rdb *redis.Client
+	ln        net.Listener
+	rdb       *redis.Client
+	addPeerCh chan *Peer
+	peers     map[*Peer]bool
+	quitCh    chan struct{}
 }
 
 func NewServer(cfg Config, rdb *redis.Client) *Server {
-	return &Server{Config: cfg, rdb: rdb}
+	return &Server{Config: cfg, rdb: rdb, addPeerCh: make(chan *Peer), peers: make(map[*Peer]bool), quitCh: make(chan struct{})}
 }
-func (s *Server) StartServer() error {
+func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.ListenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 	s.ln = ln
+	go s.loop()
 	slog.Info("CypherTrap Server Running", "listenAddr", s.ListenAddr)
-	return nil
+	return s.acceptLoop()
 }
 
 func (s *Server) Shutdown() {
@@ -37,4 +41,29 @@ func (s *Server) Shutdown() {
 	if s.rdb != nil {
 		s.rdb.Close()
 	}
+}
+func (s *Server) loop() {
+	for {
+		select {
+		case peer := <-s.addPeerCh:
+			s.peers[peer] = true
+		case <-s.quitCh:
+			return
+		}
+	}
+}
+
+func (s *Server) acceptLoop() error {
+	for {
+		conn, err := s.ln.Accept()
+		if err != nil {
+			continue
+		}
+		go s.handleConn(conn)
+	}
+}
+func (s *Server) handleConn(conn net.Conn) {
+	peer := NewPeer(conn)
+	s.addPeerCh <- peer
+	go peer.readLoop()
 }

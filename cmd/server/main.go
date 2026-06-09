@@ -27,9 +27,11 @@ func main() {
 		log.Fatal(err)
 	}
 	server := NewServer(config, rdb)
-	if err := server.StartServer(); err != nil {
-		log.Fatal(err)
-	}
+	go func() {
+		if err := server.Start(); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
