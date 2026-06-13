@@ -7,18 +7,20 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/navyn13/CypherTrap/internals/config"
-	"github.com/navyn13/CypherTrap/internals/db"
-	"github.com/navyn13/CypherTrap/internals/redis"
+	"github.com/navyn13/CypherTrap/internal/config"
+	"github.com/navyn13/CypherTrap/internal/server"
+	"github.com/navyn13/CypherTrap/internal/storage/postgres"
+	"github.com/navyn13/CypherTrap/internal/storage/redis"
 )
 
 func main() {
-	//load configs
+	// Load configs
 	cfg, err := config.Load("./config.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}
-	//redis-setup
+
+	// Redis setup
 	rdb, err := redis.NewRedisClient(cfg.RedisURL)
 	if err == nil {
 		slog.Info("Redis connected\n")
@@ -26,18 +28,20 @@ func main() {
 		log.Fatal(err)
 	}
 	defer rdb.Close()
-	//postres setup
-	dbConn, err := db.NewDB(cfg.DBURL)
+
+	// Postgres setup
+	dbConn, err := postgres.NewDB(cfg.DBURL)
 	if err == nil {
 		slog.Info("Database connected\n")
 	} else {
 		log.Fatal(err)
 	}
-	defer db.CloseDB(dbConn)
-	//server-setup
-	server := NewServer(cfg, rdb, dbConn)
+	defer postgres.CloseDB(dbConn)
+
+	// Server setup
+	srv := server.NewServer(cfg, rdb, dbConn)
 	go func() {
-		if err := server.Start(); err != nil {
+		if err := srv.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
@@ -46,6 +50,6 @@ func main() {
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 	slog.Info("Shutting down server gracefully...")
-	server.Shutdown()
+	srv.Shutdown()
 	slog.Info("Server stopped.")
 }

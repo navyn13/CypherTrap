@@ -1,4 +1,4 @@
-package main
+package ratelimit
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 type Algorithm interface {
 	Check(ip, companyName, keyName string) bool
 }
+
 type fixedWindowAlgorithm struct {
 	config fixedWindowConfig
 	rdb    *redis.Client
@@ -27,6 +28,7 @@ func NewFixedWindowAlgorithm(config fixedWindowConfig, rdb *redis.Client) Algori
 		rdb:    rdb,
 	}
 }
+
 func (a *fixedWindowAlgorithm) Check(ip, companyName, keyName string) bool {
 	limit := a.config.Limit
 	windowMs := a.config.WindowMs

@@ -1,9 +1,14 @@
-package main
+package server
 
 import (
 	"fmt"
 	"net"
 )
+
+type Message struct {
+	Peer *Peer
+	Msg  string
+}
 
 type Peer struct {
 	conn  net.Conn
@@ -16,6 +21,7 @@ func NewPeer(conn net.Conn, msgCh chan Message) *Peer {
 		msgCh: msgCh,
 	}
 }
+
 func (p *Peer) Send(msg []byte) (int, error) {
 	return p.conn.Write(msg)
 }
