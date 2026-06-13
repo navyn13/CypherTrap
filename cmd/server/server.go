@@ -25,7 +25,6 @@ type Server struct {
 	peers     map[*Peer]bool
 	quitCh    chan struct{}
 	msgCh     chan Message
-	algorithm Algorithm
 	db        *pgx.Conn
 }
 
@@ -38,7 +37,6 @@ func NewServer(cfg config.Config, rdb *redis.Client, db *pgx.Conn) *Server {
 		peers:     make(map[*Peer]bool),
 		quitCh:    make(chan struct{}),
 		msgCh:     make(chan Message),
-		algorithm: NewFixedWindowAlgorithm(5),
 	}
 }
 func (s *Server) Start() error {
@@ -92,10 +90,15 @@ func (s *Server) handleMessage(msg Message) error {
 	fmt.Println("Key Name:", key_name)
 	fmt.Println("API Key:", api_key)
 
+	algorithm, err := s.lookupAlgorithmAndConfig(namespace, key_name)
+
+	if err != nil {
+		return err
+	}
+
 	switch command {
 	case "ALLOW":
-		algorithm := s.algorithm
-		if algorithm.Check(ip) {
+		if algorithm.Check() {
 			msg.Peer.conn.Write([]byte("ALLOWED\n"))
 		} else {
 			msg.Peer.conn.Write([]byte("BLOCKED\n"))
