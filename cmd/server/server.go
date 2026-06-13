@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"log/slog"
 	"net"
@@ -76,7 +75,8 @@ func (s *Server) handleMessage(msg Message) error {
 	parts := strings.Fields(msg.Msg)
 
 	if len(parts) != 5 {
-		return fmt.Errorf("invalid message")
+		msg.Peer.Send([]byte("INVALID MESSAGE\n"))
+		return nil
 	}
 	command := parts[0]
 	ip := parts[1]
@@ -84,32 +84,28 @@ func (s *Server) handleMessage(msg Message) error {
 	key_name := parts[3]
 	api_key := parts[4]
 
-	fmt.Println("Command:", command)
-	fmt.Println("IP:", ip)
-	fmt.Println("Namespace:", namespace)
-	fmt.Println("Key Name:", key_name)
-	fmt.Println("API Key:", api_key)
-
 	isVerified := s.verifyAPIKey(namespace, key_name, api_key)
 	if !isVerified {
-		return fmt.Errorf("unauthorized request")
+		msg.Peer.Send([]byte("UNAUTHORIZED\n"))
+		return nil
 	}
 
 	algorithm, err := s.lookupAlgorithmAndConfig(namespace, key_name)
 
 	if err != nil {
-		return err
+		msg.Peer.Send([]byte("INTERNAL SERVER ERROR\n"))
+		return nil
 	}
 
 	switch command {
 	case "ALLOW":
 		if algorithm.Check(ip, namespace, key_name) {
-			msg.Peer.conn.Write([]byte("ALLOWED\n"))
+			msg.Peer.Send([]byte("ALLOWED\n"))
 		} else {
-			msg.Peer.conn.Write([]byte("BLOCKED\n"))
+			msg.Peer.Send([]byte("BLOCKED\n"))
 		}
 	default:
-		return fmt.Errorf("unknown command: %s", command)
+		msg.Peer.Send([]byte("UNKNOWN COMMAND\n"))
 	}
 	return nil
 }
