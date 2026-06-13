@@ -9,12 +9,12 @@ import (
 
 var ctx = context.Background()
 
-func NewRedisClient(addr string, db int, password string) (*redis.Client, error) {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
-	})
+func NewRedisClient(url string) (*redis.Client, error) {
+	opts, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	rdb := redis.NewClient(opts)
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis ping: %w", err)

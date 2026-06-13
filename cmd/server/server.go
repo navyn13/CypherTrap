@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/navyn13/CypherTrap/internals/config"
 	"github.com/redis/go-redis/v9"
 )
@@ -25,12 +26,14 @@ type Server struct {
 	quitCh    chan struct{}
 	msgCh     chan Message
 	algorithm Algorithm
+	db        *pgx.Conn
 }
 
-func NewServer(cfg config.Config, rdb *redis.Client) *Server {
+func NewServer(cfg config.Config, rdb *redis.Client, db *pgx.Conn) *Server {
 	return &Server{
 		Config:    cfg,
 		rdb:       rdb,
+		db:        db,
 		addPeerCh: make(chan *Peer),
 		peers:     make(map[*Peer]bool),
 		quitCh:    make(chan struct{}),

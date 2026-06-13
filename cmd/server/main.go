@@ -11,16 +11,29 @@ import (
 )
 
 func main() {
+	//load configs
 	cfg, err := config.Load("./config.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	rdb, err := NewRedisClient(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword)
-	if err != nil {
+	//redis-setup
+	rdb, err := NewRedisClient(cfg.RedisURL)
+	if err == nil {
+		slog.Info("Redis connected\n")
+	} else {
 		log.Fatal(err)
 	}
-	server := NewServer(cfg, rdb)
+	defer rdb.Close()
+	//postres setup
+	db, err := NewDB(cfg.DBURL)
+	if err == nil {
+		slog.Info("Database connected\n")
+	} else {
+		log.Fatal(err)
+	}
+	defer CloseDB(db)
+	//server-setup
+	server := NewServer(cfg, rdb, db)
 	go func() {
 		if err := server.Start(); err != nil {
 			log.Fatal(err)
