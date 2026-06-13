@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"github.com/navyn13/CypherTrap/internals/config"
+	"github.com/navyn13/CypherTrap/internals/db"
+	"github.com/navyn13/CypherTrap/internals/redis"
 )
 
 func main() {
@@ -17,7 +19,7 @@ func main() {
 		log.Fatal(err)
 	}
 	//redis-setup
-	rdb, err := NewRedisClient(cfg.RedisURL)
+	rdb, err := redis.NewRedisClient(cfg.RedisURL)
 	if err == nil {
 		slog.Info("Redis connected\n")
 	} else {
@@ -25,15 +27,15 @@ func main() {
 	}
 	defer rdb.Close()
 	//postres setup
-	db, err := NewDB(cfg.DBURL)
+	dbConn, err := db.NewDB(cfg.DBURL)
 	if err == nil {
 		slog.Info("Database connected\n")
 	} else {
 		log.Fatal(err)
 	}
-	defer CloseDB(db)
+	defer db.CloseDB(dbConn)
 	//server-setup
-	server := NewServer(cfg, rdb, db)
+	server := NewServer(cfg, rdb, dbConn)
 	go func() {
 		if err := server.Start(); err != nil {
 			log.Fatal(err)
