@@ -98,7 +98,7 @@ func (s *Server) handleMessage(msg Message) error {
 
 	switch command {
 	case "ALLOW":
-		if algorithm.Check() {
+		if algorithm.Check(ip, namespace, key_name) {
 			msg.Peer.conn.Write([]byte("ALLOWED\n"))
 		} else {
 			msg.Peer.conn.Write([]byte("BLOCKED\n"))

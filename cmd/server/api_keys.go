@@ -24,5 +24,5 @@ WHERE c.name = $1
 		return nil, fmt.Errorf("lookup api key: %w", err)
 	}
 
-	return NewAlgorithmFromDB(algorithmName, algorithmConfig)
+	return NewAlgorithmFromDB(algorithmName, algorithmConfig, s.rdb)
 }
