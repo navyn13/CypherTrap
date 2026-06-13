@@ -31,9 +31,6 @@ func (a *fixedWindowAlgorithm) Check(ip, companyName, keyName string) bool {
 	limit := a.config.Limit
 	windowMs := a.config.WindowMs
 	key := ip + companyName + keyName
-	fmt.Println("================i got hit=================", key)
-	fmt.Println("================i got hit=================", limit)
-	fmt.Println("================i got hit=================", windowMs)
 
 	result, err := a.rdb.Eval(context.Background(), `
 		local current = redis.call('GET', KEYS[1])
