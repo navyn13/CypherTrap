@@ -74,13 +74,20 @@ func (s *Server) loop() {
 func (s *Server) handleMessage(msg Message) error {
 	parts := strings.Fields(msg.Msg)
 
-	if len(parts) != 2 {
+	if len(parts) != 5 {
 		return fmt.Errorf("invalid message")
 	}
 	command := parts[0]
 	ip := parts[1]
+	namespace := parts[2]
+	key_name := parts[3]
+	api_key := parts[4]
+
 	fmt.Println("Command:", command)
 	fmt.Println("IP:", ip)
+	fmt.Println("Namespace:", namespace)
+	fmt.Println("Key Name:", key_name)
+	fmt.Println("API Key:", api_key)
 
 	switch command {
 	case "ALLOW":
