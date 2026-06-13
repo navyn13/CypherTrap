@@ -90,6 +90,11 @@ func (s *Server) handleMessage(msg Message) error {
 	fmt.Println("Key Name:", key_name)
 	fmt.Println("API Key:", api_key)
 
+	isVerified := s.verifyAPIKey(namespace, key_name, api_key)
+	if !isVerified {
+		return fmt.Errorf("unauthorized request")
+	}
+
 	algorithm, err := s.lookupAlgorithmAndConfig(namespace, key_name)
 
 	if err != nil {
