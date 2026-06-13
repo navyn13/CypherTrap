@@ -3,28 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"strconv"
 
 	"github.com/redis/go-redis/v9"
 )
 
 var ctx = context.Background()
 
-func NewRedisClient() (*redis.Client, error) {
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
-		addr = "localhost:6379"
-	}
-
-	db, err := strconv.Atoi(os.Getenv("REDIS_DB"))
-	if err != nil {
-		db = 0
-	}
-
+func NewRedisClient(addr string, db int, password string) (*redis.Client, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
-		Password: os.Getenv("REDIS_PASSWORD"),
+		Password: password,
 		DB:       db,
 	})
 

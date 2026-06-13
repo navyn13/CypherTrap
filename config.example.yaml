@@ -1,0 +1,90 @@
+# CypherTrap example configuration
+# Copy to config.yaml and trim rules you don't need.
+#
+# Rule matching: client sends a key (e.g. "user:free:abc123");
+# the first rule whose key_prefix matches wins.
+#
+# Algorithm-specific fields (required):
+#   token_bucket    → burst, refill_rate
+#   sliding_window  → limit, window
+#   fixed_window    → limit, window
+
+listen_addr: ":7878"
+redis_addr: "localhost:6379"
+redis_db: 0
+
+# Used when no rule prefix matches the incoming key.
+default_rule: global-ip
+
+rules:
+
+  # ── Token Bucket ───────────────────────────────────────────────────────────
+  # Bucket holds up to `burst` tokens. Each allowed request costs 1 token.
+  # Tokens refill continuously at `refill_rate` per second.
+  # Good for: user-facing APIs, natural burst tolerance.
+
+  - name: free-tier
+    key_prefix: "user:free:"
+    algorithm: token_bucket
+    burst: 20          # max tokens (peak burst)
+    refill_rate: 2     # tokens/sec (~120/min sustained)
+
+  - name: paid-tier
+    key_prefix: "user:paid:"
+    algorithm: token_bucket
+    burst: 200
+    refill_rate: 50    # tokens/sec (~3000/min sustained)
+
+  - name: webhook-ingest
+    key_prefix: "webhook:"
+    algorithm: token_bucket
+    burst: 50          # tolerate short spikes from partner systems
+    refill_rate: 10
+
+  # ── Sliding Window Log ─────────────────────────────────────────────────────
+  # Counts exact requests whose timestamps fall inside the last `window`.
+  # Stricter than fixed window; no boundary double-rate exploit.
+  # Good for: auth flows, sensitive endpoints, abuse-prone actions.
+
+  - name: login-endpoint
+    key_prefix: "auth:login:"
+    algorithm: sliding_window
+    limit: 5
+    window: 15m        # 5 attempts per 15 minutes
+
+  - name: password-reset
+    key_prefix: "auth:reset:"
+    algorithm: sliding_window
+    limit: 3
+    window: 1h
+
+  - name: signup-endpoint
+    key_prefix: "auth:signup:"
+    algorithm: sliding_window
+    limit: 10
+    window: 1h
+
+  # ── Fixed Window Counter ───────────────────────────────────────────────────
+  # Counter resets at the start of each `window` (e.g. every minute).
+  # Cheapest on memory and Redis ops.
+  # Good for: coarse IP limits, high-volume internal traffic.
+  # Trade-off: a client can send `limit` requests at the end of one window
+  # and `limit` more at the start of the next — up to 2x effective rate.
+
+  - name: global-ip
+    key_prefix: "ip:"
+    algorithm: fixed_window
+    limit: 500
+    window: 1m
+
+  - name: internal-service
+    key_prefix: "svc:"
+    algorithm: fixed_window
+    limit: 10000
+    window: 1h
+
+  - name: health-check
+    key_prefix: "health:"
+    algorithm: fixed_window
+    limit: 1000
+    window: 1m

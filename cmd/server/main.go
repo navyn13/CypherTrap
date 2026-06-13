@@ -7,26 +7,20 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/joho/godotenv"
+	"github.com/navyn13/CypherTrap/internals/config"
 )
 
-func loadEnv() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-}
-
 func main() {
-	loadEnv()
-	config := Config{
-		ListenAddr: os.Getenv("PORT"),
-	}
-	rdb, err := NewRedisClient()
+	cfg, err := config.Load("./config.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}
-	server := NewServer(config, rdb)
+
+	rdb, err := NewRedisClient(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword)
+	if err != nil {
+		log.Fatal(err)
+	}
+	server := NewServer(cfg, rdb)
 	go func() {
 		if err := server.Start(); err != nil {
 			log.Fatal(err)

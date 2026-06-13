@@ -7,12 +7,9 @@ import (
 	"net"
 	"strings"
 
+	"github.com/navyn13/CypherTrap/internals/config"
 	"github.com/redis/go-redis/v9"
 )
-
-type Config struct {
-	ListenAddr string
-}
 
 type Message struct {
 	Peer *Peer
@@ -20,7 +17,7 @@ type Message struct {
 }
 
 type Server struct {
-	Config
+	config.Config
 	ln        net.Listener
 	rdb       *redis.Client
 	addPeerCh chan *Peer
@@ -30,9 +27,10 @@ type Server struct {
 	algorithm Algorithm
 }
 
-func NewServer(cfg Config, rdb *redis.Client) *Server {
+func NewServer(cfg config.Config, rdb *redis.Client) *Server {
 	return &Server{
-		Config: cfg, rdb: rdb,
+		Config:    cfg,
+		rdb:       rdb,
 		addPeerCh: make(chan *Peer),
 		peers:     make(map[*Peer]bool),
 		quitCh:    make(chan struct{}),
