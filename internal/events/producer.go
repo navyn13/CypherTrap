@@ -3,7 +3,6 @@ package events
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/IBM/sarama"
 )
@@ -28,26 +27,6 @@ func NewProducer(brokers []string, topic string) (*Producer, error) {
 		producer: producer,
 		topic:    topic,
 	}, nil
-}
-
-func (p *Producer) PublishAPIKeyDeleted(apiKeyID string) error {
-	event := APIKeyEvent{
-		APIKeyID:  apiKeyID,
-		Event:     "deleted",
-		Timestamp: time.Now(),
-	}
-
-	return p.publish(event)
-}
-
-func (p *Producer) PublishAPIKeyCreated(apiKeyID string) error {
-	event := APIKeyEvent{
-		APIKeyID:  apiKeyID,
-		Event:     "created",
-		Timestamp: time.Now(),
-	}
-
-	return p.publish(event)
 }
 
 func (p *Producer) publish(event APIKeyEvent) error {

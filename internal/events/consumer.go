@@ -111,9 +111,6 @@ func (h *consumerGroupHandler) handleMessage(msg *sarama.ConsumerMessage) error 
 	switch event.Event {
 	case "deleted", "revoked":
 		return h.handleAPIKeyDeleted(event.APIKeyID)
-	case "created":
-		slog.Info("API key created", "apiKeyId", event.APIKeyID)
-		return nil
 	default:
 		slog.Warn("Unknown event type", "event", event.Event)
 	}
@@ -144,10 +141,10 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(apiKeyID string) error {
 
 	// Delete all cached verifications for this specific API key
 	pattern := fmt.Sprintf("api_verified:%s:%s:*", company, keyName)
-	
+
 	iter := h.rdb.Scan(ctx, 0, pattern, 100).Iterator()
 	deletedCount := 0
-	
+
 	for iter.Next(ctx) {
 		if err := h.rdb.Del(ctx, iter.Val()).Err(); err != nil {
 			slog.Error("Failed to delete key", "key", iter.Val(), "err", err)
@@ -155,7 +152,7 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(apiKeyID string) error {
 			deletedCount++
 		}
 	}
-	
+
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("scan keys: %w", err)
 	}
@@ -170,22 +167,22 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(apiKeyID string) error {
 		return fmt.Errorf("delete api key from database: %w", err)
 	}
 
-	slog.Info("API key deleted from DB and cache invalidated", 
+	slog.Info("API key deleted from DB and cache invalidated",
 		"apiKeyId", apiKeyID,
 		"company", company,
 		"keyName", keyName,
 		"deletedKeys", deletedCount)
-	
+
 	return nil
 }
 
 func (h *consumerGroupHandler) clearAllAPIKeyCache() error {
 	ctx := context.Background()
 	pattern := "api_verified:*"
-	
+
 	iter := h.rdb.Scan(ctx, 0, pattern, 1000).Iterator()
 	deletedCount := 0
-	
+
 	for iter.Next(ctx) {
 		if err := h.rdb.Del(ctx, iter.Val()).Err(); err != nil {
 			slog.Error("Failed to delete key", "key", iter.Val(), "err", err)
@@ -193,7 +190,7 @@ func (h *consumerGroupHandler) clearAllAPIKeyCache() error {
 			deletedCount++
 		}
 	}
-	
+
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("scan keys: %w", err)
 	}
