@@ -160,7 +160,17 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(apiKeyID string) error {
 		return fmt.Errorf("scan keys: %w", err)
 	}
 
-	slog.Info("API key deleted, cache invalidated", 
+	// Delete the API key from the database
+	_, err = h.db.Exec(
+		ctx,
+		`DELETE FROM api_keys WHERE id = $1`,
+		apiKeyID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete api key from database: %w", err)
+	}
+
+	slog.Info("API key deleted from DB and cache invalidated", 
 		"apiKeyId", apiKeyID,
 		"company", company,
 		"keyName", keyName,
