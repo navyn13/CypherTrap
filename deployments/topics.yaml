@@ -1,0 +1,4 @@
+topics:
+  - name: api-key-events
+    partitions: 3
+    replicationFactor: 1
