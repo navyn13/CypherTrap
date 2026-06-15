@@ -10,9 +10,10 @@ import (
 )
 
 type Config struct {
-	ListenAddr string `yaml:"listen_addr"`
-	RedisURL   string `yaml:"redis_url"`
-	DBURL      string `yaml:"db_url"`
+	ListenAddr  string `yaml:"listen_addr"`
+	RedisURL    string `yaml:"redis_url"`
+	DBURL       string `yaml:"db_url"`
+	KafkaBroker string `yaml:"kafka_broker"`
 }
 
 func Load(path string) (Config, error) {
@@ -35,6 +36,11 @@ func Load(path string) (Config, error) {
 	cfg.DBURL = os.Getenv("DB_URL")
 	//set redis url
 	cfg.RedisURL = os.Getenv("REDIS_URL")
+	//set kafka broker
+	cfg.KafkaBroker = os.Getenv("KAFKA_BROKER")
+	if cfg.KafkaBroker == "" {
+		cfg.KafkaBroker = "localhost:9092"
+	}
 	//set listen addr
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":7878"

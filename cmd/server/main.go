@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"log/slog"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/navyn13/CypherTrap/internal/config"
+	"github.com/navyn13/CypherTrap/internal/events"
 	"github.com/navyn13/CypherTrap/internal/server"
 	"github.com/navyn13/CypherTrap/internal/storage/postgres"
 	"github.com/navyn13/CypherTrap/internal/storage/redis"
@@ -38,6 +40,24 @@ func main() {
 	}
 	defer postgres.CloseDB(dbConn)
 
+	// Kafka consumer setup
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	kafkaBrokers := []string{cfg.KafkaBroker}
+	kafkaTopics := []string{"api-key-events"}
+	consumer, err := events.NewConsumer(kafkaBrokers, "cyphertrap-group", kafkaTopics, rdb, dbConn)
+	if err != nil {
+		slog.Warn("Kafka consumer failed to start", "err", err)
+	} else {
+		go func() {
+			if err := consumer.Start(ctx); err != nil {
+				slog.Error("Kafka consumer error", "err", err)
+			}
+		}()
+		defer consumer.Close()
+	}
+
 	// Server setup
 	srv := server.NewServer(cfg, rdb, dbConn)
 	go func() {
@@ -50,6 +70,7 @@ func main() {
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 	slog.Info("Shutting down server gracefully...")
+	cancel() // Stop Kafka consumer
 	srv.Shutdown()
 	slog.Info("Server stopped.")
 }
