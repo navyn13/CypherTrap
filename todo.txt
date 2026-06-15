@@ -1,1 +1,2 @@
 when any api key is revoked then it must create a message through kafka or some to deelte the key from redis too
+when any user gets pro plan we must include that "user" key in redis. if user in redis then pro otherwise free
