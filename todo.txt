@@ -1,3 +1,4 @@
 when any user gets pro plan we must include that "user" key in redis. if user in redis then pro otherwise free use kafka
 net to tls
 sdk for golang
+make cli for setting up configs for users
