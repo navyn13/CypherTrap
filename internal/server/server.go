@@ -14,14 +14,14 @@ import (
 
 type Server struct {
 	config.Config
-	ln              net.Listener
-	rdb             *redis.Client
-	addPeerCh       chan *Peer
-	peers           map[*Peer]bool
-	quitCh          chan struct{}
-	msgCh           chan Message
-	db              *pgx.Conn
-	authService     *auth.Service
+	ln               net.Listener
+	rdb              *redis.Client
+	addPeerCh        chan *Peer
+	peers            map[*Peer]bool
+	quitCh           chan struct{}
+	msgCh            chan Message
+	db               *pgx.Conn
+	authService      *auth.Service
 	ratelimitService *ratelimit.Service
 }
 
@@ -34,7 +34,7 @@ func NewServer(cfg config.Config, rdb *redis.Client, db *pgx.Conn) *Server {
 		peers:            make(map[*Peer]bool),
 		quitCh:           make(chan struct{}),
 		msgCh:            make(chan Message),
-		authService:      auth.NewService(db),
+		authService:      auth.NewService(db, rdb),
 		ratelimitService: ratelimit.NewService(db, rdb),
 	}
 }

@@ -1,0 +1,1 @@
+when any api key is revoked then it must create a message through kafka or some to deelte the key from redis too
