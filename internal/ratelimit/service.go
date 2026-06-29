@@ -21,12 +21,17 @@ func NewService(db *pgx.Conn, rdb *redis.Client) *Service {
 	}
 }
 
-func (s *Service) LookupAlgorithmAndConfig(companyName, keyName string) (Algorithm, error) {
-	var algorithmName string
-	var algorithmConfig json.RawMessage
+type policyEntry struct {
+	Name      string          `json:"name"`
+	Algorithm string          `json:"algorithm"`
+	Config    json.RawMessage `json:"config"`
+}
+
+func (s *Service) LookupAlgorithmAndConfig(companyName, keyName, policyName string) (Algorithm, error) {
+	var policiesJSON json.RawMessage
 	err := s.db.QueryRow(
 		context.Background(),
-		`SELECT ak.algorithm, ak.config
+		`SELECT ak.policies
 FROM api_keys ak
 JOIN companies c ON c.id = ak.company_id
 WHERE c.name = $1
@@ -34,10 +39,21 @@ WHERE c.name = $1
   AND ak.is_active = TRUE`,
 		companyName,
 		keyName,
-	).Scan(&algorithmName, &algorithmConfig)
+	).Scan(&policiesJSON)
 	if err != nil {
 		return nil, fmt.Errorf("lookup api key: %w", err)
 	}
 
-	return NewAlgorithmFromDB(algorithmName, algorithmConfig, s.rdb)
+	var policies []policyEntry
+	if err := json.Unmarshal(policiesJSON, &policies); err != nil {
+		return nil, fmt.Errorf("unmarshal policies: %w", err)
+	}
+
+	for _, policy := range policies {
+		if policy.Name == policyName {
+			return NewAlgorithmFromDB(policy.Algorithm, policy.Config, s.rdb)
+		}
+	}
+
+	return nil, fmt.Errorf("policy not found: %s", policyName)
 }

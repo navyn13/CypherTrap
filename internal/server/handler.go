@@ -8,23 +8,24 @@ import (
 func (s *Server) handleMessage(msg Message) error {
 	parts := strings.Fields(msg.Msg)
 
-	if len(parts) != 5 {
+	if len(parts) != 6 {
 		msg.Peer.Send([]byte("INVALID MESSAGE\n"))
 		return nil
 	}
 	command := parts[0]
 	ip := parts[1]
-	namespace := parts[2]
+	companyName := parts[2]
 	key_name := parts[3]
 	api_key := parts[4]
+	policyName := parts[5]
 
-	isVerified := s.authService.VerifyAPIKey(namespace, key_name, api_key)
+	isVerified := s.authService.VerifyAPIKey(companyName, key_name, api_key)
 	if !isVerified {
 		msg.Peer.Send([]byte("UNAUTHORIZED\n"))
 		return nil
 	}
 
-	algorithm, err := s.ratelimitService.LookupAlgorithmAndConfig(namespace, key_name)
+	algorithm, err := s.ratelimitService.LookupAlgorithmAndConfig(companyName, key_name, policyName)
 
 	if err != nil {
 		msg.Peer.Send([]byte("INTERNAL SERVER ERROR\n"))
@@ -33,7 +34,7 @@ func (s *Server) handleMessage(msg Message) error {
 
 	switch command {
 	case "ALLOW":
-		if algorithm.Check(ip, namespace, key_name) {
+		if algorithm.Check(ip, companyName, key_name) {
 			msg.Peer.Send([]byte("ALLOWED\n"))
 		} else {
 			msg.Peer.Send([]byte("BLOCKED\n"))

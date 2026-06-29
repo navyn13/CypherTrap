@@ -35,21 +35,25 @@ func (a *fixedWindowAlgorithm) Check(ip, companyName, keyName string) bool {
 	key := ip + companyName + keyName
 
 	result, err := a.rdb.Eval(context.Background(), `
-		local current = redis.call('GET', KEYS[1])
-		if not current then
-			redis.call('SET', KEYS[1], tonumber(ARGV[1]) - 1, 'PX', ARGV[2])
-			return 1
+		local current = redis.call('INCR', KEYS[1])
+
+		-- First request in this window
+		if current == 1 then
+			redis.call('PEXPIRE', KEYS[1], ARGV[2])
 		end
-		if tonumber(current) <= 0 then
+
+		-- Exceeded limit
+		if current > tonumber(ARGV[1]) then
 			return 0
 		end
-		redis.call('DECR', KEYS[1])
+
 		return 1
 	`, []string{key}, limit, windowMs).Int()
 
 	if err != nil {
 		return false
 	}
+
 	return result == 1
 }
 
