@@ -1,7 +1,8 @@
 package server
 
 import (
-	"log"
+	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"net"
 
@@ -40,13 +41,21 @@ func NewServer(cfg config.Config, rdb *redis.Client, db *pgx.Conn) *Server {
 }
 
 func (s *Server) Start() error {
-	ln, err := net.Listen("tcp", s.ListenAddr)
+	cert, err := tls.LoadX509KeyPair(s.TLSCertFile, s.TLSKeyFile)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("load TLS key pair: %w", err)
+	}
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+	ln, err := tls.Listen("tcp", s.ListenAddr, tlsConfig)
+	if err != nil {
+		return fmt.Errorf("tls listen: %w", err)
 	}
 	s.ln = ln
 	go s.loop()
-	slog.Info("CypherTrap Server Running", "listenAddr", s.ListenAddr)
+	slog.Info("CypherTrap Server Running (TLS)", "listenAddr", s.ListenAddr)
 	return s.acceptLoop()
 }
 
