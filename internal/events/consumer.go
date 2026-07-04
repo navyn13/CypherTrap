@@ -3,12 +3,14 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -16,17 +18,19 @@ type APIKeyEvent struct {
 	APIKeyID  string    `json:"apiKeyId"`
 	Event     string    `json:"event"`
 	Timestamp time.Time `json:"timestamp"`
+	Company   string    `json:"company,omitempty"`
+	KeyName   string    `json:"keyName,omitempty"`
 }
 
 type Consumer struct {
 	consumer sarama.ConsumerGroup
 	rdb      *redis.Client
-	db       *pgx.Conn
+	db       *pgxpool.Pool
 	topics   []string
 	ready    chan bool
 }
 
-func NewConsumer(brokers []string, groupID string, topics []string, rdb *redis.Client, db *pgx.Conn) (*Consumer, error) {
+func NewConsumer(brokers []string, groupID string, topics []string, rdb *redis.Client, db *pgxpool.Pool) (*Consumer, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_6_0_0
 	config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
@@ -77,7 +81,7 @@ func (c *Consumer) Close() error {
 
 type consumerGroupHandler struct {
 	rdb   *redis.Client
-	db    *pgx.Conn
+	db    *pgxpool.Pool
 	ready chan bool
 }
 
@@ -110,7 +114,7 @@ func (h *consumerGroupHandler) handleMessage(msg *sarama.ConsumerMessage) error 
 
 	switch event.Event {
 	case "deleted", "revoked":
-		return h.handleAPIKeyDeleted(event.APIKeyID)
+		return h.handleAPIKeyDeleted(event)
 	default:
 		slog.Warn("Unknown event type", "event", event.Event)
 	}
@@ -118,28 +122,44 @@ func (h *consumerGroupHandler) handleMessage(msg *sarama.ConsumerMessage) error 
 	return nil
 }
 
-func (h *consumerGroupHandler) handleAPIKeyDeleted(apiKeyID string) error {
+func (h *consumerGroupHandler) handleAPIKeyDeleted(event APIKeyEvent) error {
 	ctx := context.Background()
+	company, keyName := event.Company, event.KeyName
 
-	// Look up company and key_name from database
-	var company, keyName string
-	err := h.db.QueryRow(
-		ctx,
-		`SELECT c.name, ak.name
-		 FROM api_keys ak
-		 JOIN companies c ON c.id = ak.company_id
-		 WHERE ak.id = $1`,
-		apiKeyID,
-	).Scan(&company, &keyName)
-
-	if err != nil {
-		// If key not found in DB, it's already deleted - just log and continue
-		slog.Warn("API key not found in database, clearing all cache", "apiKeyId", apiKeyID, "err", err)
-		// Fallback: clear all api_verified cache (nuclear option)
-		return h.clearAllAPIKeyCache()
+	if company == "" || keyName == "" {
+		err := h.db.QueryRow(
+			ctx,
+			`SELECT c.name, ak.name
+			 FROM api_keys ak
+			 JOIN companies c ON c.id = ak.company_id
+			 WHERE ak.id = $1`,
+			event.APIKeyID,
+		).Scan(&company, &keyName)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("API key already removed from DB, clearing all verification cache",
+					"apiKeyId", event.APIKeyID)
+				return h.clearAllAPIKeyCache()
+			}
+			return fmt.Errorf("lookup api key %s: %w", event.APIKeyID, err)
+		}
 	}
 
-	// Delete all cached verifications for this specific API key
+	deletedCount, err := h.invalidateAPIKeyCache(ctx, company, keyName)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("API key verification cache invalidated",
+		"apiKeyId", event.APIKeyID,
+		"company", company,
+		"keyName", keyName,
+		"deletedKeys", deletedCount)
+
+	return nil
+}
+
+func (h *consumerGroupHandler) invalidateAPIKeyCache(ctx context.Context, company, keyName string) (int, error) {
 	pattern := fmt.Sprintf("api_verified:%s:%s:*", company, keyName)
 
 	iter := h.rdb.Scan(ctx, 0, pattern, 100).Iterator()
@@ -154,26 +174,10 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(apiKeyID string) error {
 	}
 
 	if err := iter.Err(); err != nil {
-		return fmt.Errorf("scan keys: %w", err)
+		return deletedCount, fmt.Errorf("scan keys: %w", err)
 	}
 
-	// Delete the API key from the database
-	_, err = h.db.Exec(
-		ctx,
-		`DELETE FROM api_keys WHERE id = $1`,
-		apiKeyID,
-	)
-	if err != nil {
-		return fmt.Errorf("delete api key from database: %w", err)
-	}
-
-	slog.Info("API key deleted from DB and cache invalidated",
-		"apiKeyId", apiKeyID,
-		"company", company,
-		"keyName", keyName,
-		"deletedKeys", deletedCount)
-
-	return nil
+	return deletedCount, nil
 }
 
 func (h *consumerGroupHandler) clearAllAPIKeyCache() error {

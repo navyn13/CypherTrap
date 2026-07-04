@@ -7,17 +7,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
-	db  *pgx.Conn
+	db  *pgxpool.Pool
 	rdb *redis.Client
 }
 
-func NewService(db *pgx.Conn, rdb *redis.Client) *Service {
+func NewService(db *pgxpool.Pool, rdb *redis.Client) *Service {
 	return &Service{
 		db:  db,
 		rdb: rdb,

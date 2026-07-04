@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/navyn13/CypherTrap/internal/auth"
 	"github.com/navyn13/CypherTrap/internal/config"
 	"github.com/navyn13/CypherTrap/internal/ratelimit"
@@ -21,12 +21,12 @@ type Server struct {
 	peers            map[*Peer]bool
 	quitCh           chan struct{}
 	msgCh            chan Message
-	db               *pgx.Conn
+	db               *pgxpool.Pool
 	authService      *auth.Service
 	ratelimitService *ratelimit.Service
 }
 
-func NewServer(cfg config.Config, rdb *redis.Client, db *pgx.Conn) *Server {
+func NewServer(cfg config.Config, rdb *redis.Client, db *pgxpool.Pool) *Server {
 	return &Server{
 		Config:           cfg,
 		rdb:              rdb,

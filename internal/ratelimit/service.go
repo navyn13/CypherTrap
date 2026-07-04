@@ -5,16 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
 type Service struct {
-	db  *pgx.Conn
+	db  *pgxpool.Pool
 	rdb *redis.Client
 }
 
-func NewService(db *pgx.Conn, rdb *redis.Client) *Service {
+func NewService(db *pgxpool.Pool, rdb *redis.Client) *Service {
 	return &Service{
 		db:  db,
 		rdb: rdb,

@@ -20,6 +20,7 @@ import argparse
 import getpass
 import os
 import random
+import signal
 import socket
 import ssl
 import sys
@@ -27,7 +28,7 @@ import threading
 import time
 import uuid
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 DEFAULT_DURATION_SEC = 5 * 60
 DEFAULT_REQUESTS_PER_SECOND = 100
@@ -193,20 +194,37 @@ def format_second_log_line(second: int, counts: Counter[str], cumulative: int) -
     return " | ".join(parts)
 
 
+def interruptible_sleep(seconds: float, stop_event: threading.Event, step: float = 0.05) -> None:
+    """Sleep in small steps so Ctrl+C / stop_event can exit promptly."""
+    deadline = time.perf_counter() + seconds
+    while not stop_event.is_set():
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return
+        time.sleep(min(step, remaining))
+
+
 def second_log_loop(
     start: float,
     duration_sec: int,
     metrics: MetricsRecorder,
+    stop_event: threading.Event,
 ) -> None:
     print("=== Per-second log ===")
     print("  second | calls this sec | running total | breakdown")
     print("  -------+---------------+---------------+------------------")
 
     for second in range(duration_sec):
+        if stop_event.is_set():
+            break
+
         wake_at = start + second + 1
         remaining = wake_at - time.perf_counter()
         if remaining > 0:
-            time.sleep(remaining)
+            interruptible_sleep(remaining, stop_event)
+
+        if stop_event.is_set():
+            break
 
         counts = metrics.bucket_counts(second)
         cumulative = metrics.cumulative_total_through(second)
@@ -216,24 +234,39 @@ def second_log_loop(
     print()
 
 
-def open_tls(server_addr: str) -> tuple[socket.socket, ssl.SSLSocket]:
+def open_tls(server_addr: str, io_timeout: float = 1.0) -> tuple[socket.socket, ssl.SSLSocket]:
     host, port_str = server_addr.rsplit(":", 1)
     port = int(port_str)
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     sock = socket.create_connection((host, port), timeout=30)
+    sock.settimeout(io_timeout)
     tls = ctx.wrap_socket(sock, server_hostname=host)
     return sock, tls
 
 
 def send_allow(
-    tls: ssl.SSLSocket, user: str, company: str, key_name: str, api_key: str, policy: str
+    tls: ssl.SSLSocket,
+    user: str,
+    company: str,
+    key_name: str,
+    api_key: str,
+    policy: str,
+    stop_event: threading.Event,
 ) -> str:
+    if stop_event.is_set():
+        raise InterruptedError("stress test stopped")
+
     tls.sendall(allow_line(user, company, key_name, api_key, policy).encode())
     buf = b""
     while b"\n" not in buf:
-        chunk = tls.recv(256)
+        if stop_event.is_set():
+            raise InterruptedError("stress test stopped")
+        try:
+            chunk = tls.recv(256)
+        except socket.timeout:
+            continue
         if not chunk:
             raise ConnectionError("connection closed while reading response")
         buf += chunk
@@ -252,6 +285,7 @@ def run_worker(
     key_name: str,
     api_key: str,
     policy: str,
+    stop_event: threading.Event,
 ) -> Counter[str]:
     counts: Counter[str] = Counter()
     rng = random.Random(worker_id)
@@ -268,31 +302,40 @@ def run_worker(
 
     try:
         for second in range(duration_sec):
+            if stop_event.is_set():
+                break
+
             second_start = test_start + second
             now = time.perf_counter()
             if now < second_start:
-                time.sleep(second_start - now)
+                interruptible_sleep(second_start - now, stop_event)
 
-            if time.perf_counter() >= deadline:
+            if stop_event.is_set() or time.perf_counter() >= deadline:
                 break
 
             batch_size = requests_for_second(second, base_requests)
 
             for _ in range(batch_size):
-                if time.perf_counter() >= deadline:
+                if stop_event.is_set() or time.perf_counter() >= deadline:
                     return counts
 
                 client_ip = new_client_ip(rng)
 
                 try:
                     conn = ensure_connected()
-                    line = send_allow(conn, client_ip, company, key_name, api_key, policy)
+                    line = send_allow(
+                        conn, client_ip, company, key_name, api_key, policy, stop_event
+                    )
                     if line:
                         kind = classify_response(line)
                         counts[kind] += 1
                         metrics.record(kind, time.perf_counter())
                     tracker.record_send()
+                except InterruptedError:
+                    return counts
                 except (ConnectionError, OSError, ssl.SSLError):
+                    if stop_event.is_set():
+                        return counts
                     if tls is not None:
                         try:
                             tls.close()
@@ -304,7 +347,7 @@ def run_worker(
                         except OSError:
                             pass
                     sock, tls = None, None
-                    time.sleep(0.05 * (1 + rng.random()))
+                    interruptible_sleep(0.05 * (1 + rng.random()), stop_event)
     finally:
         if tls is not None:
             try:
@@ -406,41 +449,62 @@ def main() -> int:
     tracker = RequestTracker()
     start = time.perf_counter()
     metrics = MetricsRecorder(start, bucket_sec=1.0)
+    stop_event = threading.Event()
+
+    def request_stop(_signum: int | None = None, _frame: object | None = None) -> None:
+        if not stop_event.is_set():
+            print("\nStopping stress test (Ctrl+C)...", file=sys.stderr)
+            stop_event.set()
+
+    signal.signal(signal.SIGINT, request_stop)
 
     log_thread = threading.Thread(
         target=second_log_loop,
-        args=(start, duration_sec, metrics),
+        args=(start, duration_sec, metrics, stop_event),
         daemon=True,
     )
     log_thread.start()
 
-    with ThreadPoolExecutor(max_workers=connections) as pool:
-        futures = [
-            pool.submit(
-                run_worker,
-                worker_id,
-                start,
-                duration_sec,
-                base_requests,
-                tracker,
-                metrics,
-                server_addr,
-                company,
-                key_name,
-                api_key,
-                policy,
-            )
-            for worker_id in range(connections)
-        ]
-        for future in as_completed(futures):
-            try:
-                future.result()
-            except Exception as exc:
-                print(f"Worker failed: {exc}", file=sys.stderr)
+    interrupted = False
+    pool = ThreadPoolExecutor(max_workers=connections)
+    futures = [
+        pool.submit(
+            run_worker,
+            worker_id,
+            start,
+            duration_sec,
+            base_requests,
+            tracker,
+            metrics,
+            server_addr,
+            company,
+            key_name,
+            api_key,
+            policy,
+            stop_event,
+        )
+        for worker_id in range(connections)
+    ]
+    pending = set(futures)
+    try:
+        while pending and not stop_event.is_set():
+            done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+            for future in done:
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f"Worker failed: {exc}", file=sys.stderr)
+    except KeyboardInterrupt:
+        request_stop()
+    finally:
+        interrupted = stop_event.is_set()
+        stop_event.set()
+        pool.shutdown(wait=True, cancel_futures=interrupted)
 
-    remaining = (start + duration_sec) - time.perf_counter()
-    if remaining > 0:
-        time.sleep(remaining)
+    if not interrupted:
+        remaining = (start + duration_sec) - time.perf_counter()
+        if remaining > 0:
+            interruptible_sleep(remaining, stop_event)
 
     log_thread.join(timeout=5)
 
@@ -450,6 +514,8 @@ def main() -> int:
     rps = responses / elapsed if elapsed > 0 else 0.0
 
     print("=== Results ===")
+    if interrupted:
+        print("  Status:        stopped early (Ctrl+C)")
     print(f"  Duration:      {format_duration(elapsed)} / {format_duration(duration_sec)}")
     print(f"  Responses:     {responses} / {total_target} target")
     print(f"  Unique IPs:    {tracker.total_sent} sent ({unique_ips} planned, 1 UUID per request)")
