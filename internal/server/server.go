@@ -54,8 +54,11 @@ func (s *Server) Start() error {
 		return fmt.Errorf("tls listen: %w", err)
 	}
 	s.ln = ln
-	go s.loop()
-	slog.Info("CypherTrap Server Running (TLS)", "listenAddr", s.ListenAddr)
+	go s.peerLoop()
+	for range messageWorkerCount {
+		go s.messageWorkerLoop()
+	}
+	slog.Info("CypherTrap Server Running (TLS)", "listenAddr", s.ListenAddr, "messageWorkers", messageWorkerCount)
 	return s.acceptLoop()
 }
 

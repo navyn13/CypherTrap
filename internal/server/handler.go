@@ -45,11 +45,22 @@ func (s *Server) handleMessage(msg Message) error {
 	return nil
 }
 
-func (s *Server) loop() {
+const messageWorkerCount = 5
+
+func (s *Server) peerLoop() {
 	for {
 		select {
 		case peer := <-s.addPeerCh:
 			s.peers[peer] = true
+		case <-s.quitCh:
+			return
+		}
+	}
+}
+
+func (s *Server) messageWorkerLoop() {
+	for {
+		select {
 		case msg := <-s.msgCh:
 			if err := s.handleMessage(msg); err != nil {
 				slog.Error("raw Message Error", "err", err)
