@@ -45,7 +45,7 @@ func (s *Server) handleMessage(msg Message) error {
 	return nil
 }
 
-const messageWorkerCount = 5
+const messageWorkerCount = 8
 
 func (s *Server) peerLoop() {
 	for {

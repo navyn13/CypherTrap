@@ -5,7 +5,8 @@ Connects over TLS and sends newline-delimited ALLOW lines:
   ALLOW <ip> <company> <keyName> <apiKey> <policy>
 
 Each connection sends a batch every second. Second 0 = 100 requests, second 1 = 200,
-second 2 = 400, doubling each second (100 × 2^s). Every request uses a fresh UUID.
+second 2 = 400, doubling each second (100 × 2^s). Each connection uses one stable
+client IP for all of its requests; IPs differ across connections.
 All connections follow the same schedule in parallel.
 
 Usage:
@@ -63,9 +64,9 @@ def prompt_positive_int(label: str, default: int | None = None) -> int:
         print("Enter a positive integer.")
 
 
-def new_client_ip(rng: random.Random | None = None) -> str:
-    """Fresh random UUID for each ALLOW — unique client IP every request."""
-    return str(uuid.uuid4())
+def client_ip_for_worker(worker_id: int) -> str:
+    """One simulated client IP per TLS connection (stable for the worker lifetime)."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"cyphertrap-stress-worker-{worker_id}"))
 
 
 def requests_for_second(second: int, base: int) -> int:
@@ -96,7 +97,7 @@ def describe_schedule(duration_sec: int, base: int, preview: int = 8) -> list[di
 
 
 def print_schedule_preview(duration_sec: int, base: int, preview: int = 8) -> None:
-    print("  Per-second batch (each connection, unique UUID per request):")
+    print("  Per-second batch (each connection, one stable client IP):")
     show = min(preview, duration_sec)
     for second in range(show):
         batch = requests_for_second(second, base)
@@ -288,6 +289,7 @@ def run_worker(
     stop_event: threading.Event,
 ) -> Counter[str]:
     counts: Counter[str] = Counter()
+    client_ip = client_ip_for_worker(worker_id)
     rng = random.Random(worker_id)
     sock: socket.socket | None = None
     tls: ssl.SSLSocket | None = None
@@ -318,8 +320,6 @@ def run_worker(
             for _ in range(batch_size):
                 if stop_event.is_set() or time.perf_counter() >= deadline:
                     return counts
-
-                client_ip = new_client_ip(rng)
 
                 try:
                     conn = ensure_connected()
@@ -380,7 +380,7 @@ def parse_args() -> argparse.Namespace:
         "--connections",
         type=int,
         default=None,
-        help="Parallel TLS connections (each sends unique UUID per request)",
+        help="Parallel TLS connections (each uses one stable client IP)",
     )
     parser.add_argument(
         "--duration",
@@ -419,7 +419,7 @@ def main() -> int:
 
     per_conn_total = sum(requests_for_second(s, base_requests) for s in range(duration_sec))
     total_target = total_planned_calls(connections, duration_sec, base_requests)
-    unique_ips = total_target
+    unique_ips = connections
 
     print()
     print("Configuration:")
@@ -431,7 +431,7 @@ def main() -> int:
     print(f"  Connections:     {connections} (identical schedule each)")
     print(f"  Second 0 batch:  {base_requests} req/conn (default {DEFAULT_REQUESTS_PER_SECOND})")
     print(f"  Growth:          ×{SECOND_GROWTH} each second (100 → 200 → 400 → …)")
-    print(f"  Per-conn total:  {per_conn_total} requests, {per_conn_total} unique UUIDs")
+    print(f"  Per-conn total:  {per_conn_total} requests, 1 client IP each")
     print(f"  Target calls:    {total_target} ({connections} connections)")
     print(f"  Cap per second:  {MAX_REQUESTS_PER_SECOND} req/conn (after doubling ceiling)")
     print()
@@ -518,7 +518,7 @@ def main() -> int:
         print("  Status:        stopped early (Ctrl+C)")
     print(f"  Duration:      {format_duration(elapsed)} / {format_duration(duration_sec)}")
     print(f"  Responses:     {responses} / {total_target} target")
-    print(f"  Unique IPs:    {tracker.total_sent} sent ({unique_ips} planned, 1 UUID per request)")
+    print(f"  Unique IPs:    {unique_ips} ({connections} connections, 1 IP each)")
     print(f"  Throughput:    {rps:.1f} req/s")
     print(f"  ALLOWED:       {totals['allowed']}")
     print(f"  BLOCKED:       {totals['blocked']}")
