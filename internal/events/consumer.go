@@ -150,11 +150,17 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(event APIKeyEvent) error {
 		return err
 	}
 
+	policyDeletedCount, err := h.invalidatePolicyCache(ctx, company, keyName)
+	if err != nil {
+		return err
+	}
+
 	slog.Info("API key verification cache invalidated",
 		"apiKeyId", event.APIKeyID,
 		"company", company,
 		"keyName", keyName,
-		"deletedKeys", deletedCount)
+		"deletedKeys", deletedCount,
+		"deletedPolicyKeys", policyDeletedCount)
 
 	return nil
 }
@@ -180,25 +186,47 @@ func (h *consumerGroupHandler) invalidateAPIKeyCache(ctx context.Context, compan
 	return deletedCount, nil
 }
 
-func (h *consumerGroupHandler) clearAllAPIKeyCache() error {
-	ctx := context.Background()
-	pattern := "api_verified:*"
+func (h *consumerGroupHandler) invalidatePolicyCache(ctx context.Context, company, keyName string) (int, error) {
+	pattern := fmt.Sprintf("policy_config:%s:%s:*", company, keyName)
 
-	iter := h.rdb.Scan(ctx, 0, pattern, 1000).Iterator()
+	iter := h.rdb.Scan(ctx, 0, pattern, 100).Iterator()
 	deletedCount := 0
 
 	for iter.Next(ctx) {
 		if err := h.rdb.Del(ctx, iter.Val()).Err(); err != nil {
-			slog.Error("Failed to delete key", "key", iter.Val(), "err", err)
+			slog.Error("Failed to delete policy cache key", "key", iter.Val(), "err", err)
 		} else {
 			deletedCount++
 		}
 	}
 
 	if err := iter.Err(); err != nil {
-		return fmt.Errorf("scan keys: %w", err)
+		return deletedCount, fmt.Errorf("scan policy cache keys: %w", err)
 	}
 
-	slog.Warn("Cleared all API key cache entries", "deletedKeys", deletedCount)
+	return deletedCount, nil
+}
+
+func (h *consumerGroupHandler) clearAllAPIKeyCache() error {
+	ctx := context.Background()
+	deletedCount := 0
+
+	for _, pattern := range []string{"api_verified:*", "policy_config:*"} {
+		iter := h.rdb.Scan(ctx, 0, pattern, 1000).Iterator()
+
+		for iter.Next(ctx) {
+			if err := h.rdb.Del(ctx, iter.Val()).Err(); err != nil {
+				slog.Error("Failed to delete key", "key", iter.Val(), "err", err)
+			} else {
+				deletedCount++
+			}
+		}
+
+		if err := iter.Err(); err != nil {
+			return fmt.Errorf("scan keys %s: %w", pattern, err)
+		}
+	}
+
+	slog.Warn("Cleared all API key and policy cache entries", "deletedKeys", deletedCount)
 	return nil
 }
