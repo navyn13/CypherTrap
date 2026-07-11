@@ -40,13 +40,15 @@ func main() {
 	}
 	defer postgres.CloseDB(dbConn)
 
-	// Kafka consumer setup
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Server setup (auth service is shared with Kafka for cache invalidation)
+	srv := server.NewServer(cfg, rdb, dbConn)
+
 	kafkaBrokers := []string{cfg.KafkaBroker}
 	kafkaTopics := []string{"api-key-events"}
-	consumer, err := events.NewConsumer(kafkaBrokers, "cyphertrap-group", kafkaTopics, rdb, dbConn)
+	consumer, err := events.NewConsumer(kafkaBrokers, "cyphertrap-group", kafkaTopics, rdb, dbConn, srv.AuthService(), srv.RateLimitService())
 	if err != nil {
 		slog.Warn("Kafka consumer failed to start", "err", err)
 	} else {
@@ -58,8 +60,6 @@ func main() {
 		defer consumer.Close()
 	}
 
-	// Server setup
-	srv := server.NewServer(cfg, rdb, dbConn)
 	go func() {
 		if err := srv.Start(); err != nil {
 			log.Fatal(err)

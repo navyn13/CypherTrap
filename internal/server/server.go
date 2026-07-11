@@ -62,6 +62,14 @@ func (s *Server) Start() error {
 	return s.acceptLoop()
 }
 
+func (s *Server) AuthService() *auth.Service {
+	return s.authService
+}
+
+func (s *Server) RateLimitService() *ratelimit.Service {
+	return s.ratelimitService
+}
+
 func (s *Server) Shutdown() {
 	if s.ln != nil {
 		s.ln.Close()

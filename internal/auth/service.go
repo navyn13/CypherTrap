@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,9 +14,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const verifiedCacheTTL = time.Hour
+
+type localCacheEntry struct {
+	expiresAt time.Time
+}
+
 type Service struct {
-	db  *pgxpool.Pool
-	rdb *redis.Client
+	db         *pgxpool.Pool
+	rdb        *redis.Client
+	localCache sync.Map // map[string]localCacheEntry
 }
 
 func NewService(db *pgxpool.Pool, rdb *redis.Client) *Service {
@@ -25,20 +34,21 @@ func NewService(db *pgxpool.Pool, rdb *redis.Client) *Service {
 }
 
 func (s *Service) VerifyAPIKey(companyName, keyName, apiKey string) bool {
-
 	ctx := context.Background()
 
-	// Create a fast hash of the incoming API key for cache lookup
 	apiKeyHash := hashAPIKey(apiKey)
 	cacheKey := fmt.Sprintf("api_verified:%s:%s:%s", companyName, keyName, apiKeyHash)
 
-	// Check if this exact API key was verified before (Redis cache)
-	cachedResult, err := s.rdb.Get(ctx, cacheKey).Result()
-	if err == nil && cachedResult == "1" {
+	if s.localCacheHit(cacheKey) {
 		return true
 	}
 
-	// Cache miss -> query DB and verify with bcrypt
+	cachedResult, err := s.rdb.Get(ctx, cacheKey).Result()
+	if err == nil && cachedResult == "1" {
+		s.localCache.Store(cacheKey, localCacheEntry{expiresAt: time.Now().Add(verifiedCacheTTL)})
+		return true
+	}
+
 	var storedBcryptHash string
 	err = s.db.QueryRow(
 		ctx,
@@ -51,20 +61,49 @@ func (s *Service) VerifyAPIKey(companyName, keyName, apiKey string) bool {
 		companyName,
 		keyName,
 	).Scan(&storedBcryptHash)
-
 	if err != nil {
 		return false
 	}
 
-	// Verify with bcrypt (slow, but only done once per unique API key)
 	if bcrypt.CompareHashAndPassword([]byte(storedBcryptHash), []byte(apiKey)) != nil {
 		return false
 	}
 
-	// Cache the successful verification result
-	s.rdb.Set(ctx, cacheKey, "1", time.Hour).Err()
-
+	s.rdb.Set(ctx, cacheKey, "1", verifiedCacheTTL).Err()
+	s.localCache.Store(cacheKey, localCacheEntry{expiresAt: time.Now().Add(verifiedCacheTTL)})
 	return true
+}
+
+func (s *Service) localCacheHit(cacheKey string) bool {
+	v, ok := s.localCache.Load(cacheKey)
+	if !ok {
+		return false
+	}
+	entry := v.(localCacheEntry)
+	if time.Now().After(entry.expiresAt) {
+		s.localCache.Delete(cacheKey)
+		return false
+	}
+	return true
+}
+
+// InvalidateAPIKey removes local verification entries for a company/key pair.
+func (s *Service) InvalidateAPIKey(company, keyName string) {
+	prefix := fmt.Sprintf("api_verified:%s:%s:", company, keyName)
+	s.localCache.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			s.localCache.Delete(k)
+		}
+		return true
+	})
+}
+
+// ClearVerifiedCache drops all local verification entries.
+func (s *Service) ClearVerifiedCache() {
+	s.localCache.Range(func(key, _ any) bool {
+		s.localCache.Delete(key)
+		return true
+	})
 }
 
 func hashAPIKey(apiKey string) string {

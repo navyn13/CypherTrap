@@ -11,6 +11,8 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/navyn13/CypherTrap/internal/auth"
+	"github.com/navyn13/CypherTrap/internal/ratelimit"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,14 +25,16 @@ type APIKeyEvent struct {
 }
 
 type Consumer struct {
-	consumer sarama.ConsumerGroup
-	rdb      *redis.Client
-	db       *pgxpool.Pool
-	topics   []string
-	ready    chan bool
+	consumer         sarama.ConsumerGroup
+	rdb              *redis.Client
+	db               *pgxpool.Pool
+	authService      *auth.Service
+	ratelimitService *ratelimit.Service
+	topics           []string
+	ready            chan bool
 }
 
-func NewConsumer(brokers []string, groupID string, topics []string, rdb *redis.Client, db *pgxpool.Pool) (*Consumer, error) {
+func NewConsumer(brokers []string, groupID string, topics []string, rdb *redis.Client, db *pgxpool.Pool, authService *auth.Service, ratelimitService *ratelimit.Service) (*Consumer, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_6_0_0
 	config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
@@ -43,19 +47,23 @@ func NewConsumer(brokers []string, groupID string, topics []string, rdb *redis.C
 	}
 
 	return &Consumer{
-		consumer: consumer,
-		rdb:      rdb,
-		db:       db,
-		topics:   topics,
-		ready:    make(chan bool),
+		consumer:         consumer,
+		rdb:              rdb,
+		db:               db,
+		authService:      authService,
+		ratelimitService: ratelimitService,
+		topics:           topics,
+		ready:            make(chan bool),
 	}, nil
 }
 
 func (c *Consumer) Start(ctx context.Context) error {
 	handler := &consumerGroupHandler{
-		rdb:   c.rdb,
-		db:    c.db,
-		ready: c.ready,
+		rdb:              c.rdb,
+		db:               c.db,
+		authService:      c.authService,
+		ratelimitService: c.ratelimitService,
+		ready:            c.ready,
 	}
 
 	go func() {
@@ -80,9 +88,11 @@ func (c *Consumer) Close() error {
 }
 
 type consumerGroupHandler struct {
-	rdb   *redis.Client
-	db    *pgxpool.Pool
-	ready chan bool
+	rdb              *redis.Client
+	db               *pgxpool.Pool
+	authService      *auth.Service
+	ratelimitService *ratelimit.Service
+	ready            chan bool
 }
 
 func (h *consumerGroupHandler) Setup(sarama.ConsumerGroupSession) error {
@@ -149,10 +159,16 @@ func (h *consumerGroupHandler) handleAPIKeyDeleted(event APIKeyEvent) error {
 	if err != nil {
 		return err
 	}
+	if h.authService != nil {
+		h.authService.InvalidateAPIKey(company, keyName)
+	}
 
 	policyDeletedCount, err := h.invalidatePolicyCache(ctx, company, keyName)
 	if err != nil {
 		return err
+	}
+	if h.ratelimitService != nil {
+		h.ratelimitService.InvalidatePolicy(company, keyName)
 	}
 
 	slog.Info("API key verification cache invalidated",
@@ -225,6 +241,13 @@ func (h *consumerGroupHandler) clearAllAPIKeyCache() error {
 		if err := iter.Err(); err != nil {
 			return fmt.Errorf("scan keys %s: %w", pattern, err)
 		}
+	}
+
+	if h.authService != nil {
+		h.authService.ClearVerifiedCache()
+	}
+	if h.ratelimitService != nil {
+		h.ratelimitService.ClearPolicyCache()
 	}
 
 	slog.Warn("Cleared all API key and policy cache entries", "deletedKeys", deletedCount)
