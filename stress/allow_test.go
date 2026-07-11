@@ -60,19 +60,33 @@ func newMetrics(start time.Time) *metrics {
 	}
 }
 
-func (m *metrics) record(kind string) {
+// flush merges per-worker local counters into shared totals/buckets.
+func (m *metrics) flush(local map[string]int64) {
+	var n int64
+	for _, v := range local {
+		n += v
+	}
+	if n == 0 {
+		return
+	}
 	sec := int(time.Since(m.start).Seconds())
 	if sec < 0 {
 		sec = 0
 	}
 	m.mu.Lock()
-	m.totals[kind]++
 	b, ok := m.buckets[sec]
 	if !ok {
 		b = make(map[string]int64)
 		m.buckets[sec] = b
 	}
-	b[kind]++
+	for k, v := range local {
+		if v == 0 {
+			continue
+		}
+		m.totals[k] += v
+		b[k] += v
+		local[k] = 0
+	}
 	m.mu.Unlock()
 }
 
@@ -403,59 +417,16 @@ func serverReachable(serverAddr string) bool {
 }
 
 func sendAllow(conn net.Conn, clientIP, company, keyName, apiKey, policy string) (string, error) {
-	_ = conn.SetDeadline(time.Now().Add(ioTimeout))
+	_ = conn.SetWriteDeadline(time.Now().Add(ioTimeout))
 	if _, err := conn.Write([]byte(allowLine(clientIP, company, keyName, apiKey, policy))); err != nil {
 		return "", err
 	}
-	return readResponseLine(conn, nil)
-}
-
-// readResponseLine reads one newline-terminated response. leftover holds any
-// leftover bytes from a previous read (pipelined responses may arrive together).
-func readResponseLine(conn net.Conn, leftover *[]byte) (string, error) {
-	var buf []byte
-	if leftover != nil && len(*leftover) > 0 {
-		buf = append(buf, (*leftover)...)
-		*leftover = (*leftover)[:0]
-		if i := indexByte(buf, '\n'); i >= 0 {
-			line := strings.TrimSpace(string(buf[:i]))
-			if i+1 < len(buf) {
-				*leftover = append(*leftover, buf[i+1:]...)
-			}
-			return line, nil
-		}
+	_ = conn.SetReadDeadline(time.Now().Add(ioTimeout))
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return "", err
 	}
-
-	tmp := make([]byte, 4096)
-	for {
-		_ = conn.SetDeadline(time.Now().Add(ioTimeout))
-		n, err := conn.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			if i := indexByte(buf, '\n'); i >= 0 {
-				line := strings.TrimSpace(string(buf[:i]))
-				if leftover != nil && i+1 < len(buf) {
-					*leftover = append((*leftover)[:0], buf[i+1:]...)
-				}
-				return line, nil
-			}
-		}
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			return "", err
-		}
-	}
-}
-
-func indexByte(b []byte, c byte) int {
-	for i := range b {
-		if b[i] == c {
-			return i
-		}
-	}
-	return -1
+	return line, nil
 }
 
 func runWorker(
@@ -475,29 +446,30 @@ func runWorker(
 	}
 	reqLine := []byte(allowLine(clientIP, company, keyName, apiKey, policy))
 	writeBuf := make([]byte, 0, len(reqLine)*pipelineDepth)
+	local := map[string]int64{}
 
 	var conn net.Conn
-	var leftover []byte
-	ensure := func() (net.Conn, error) {
+	var rbuf *bufio.Reader
+	ensure := func() (net.Conn, *bufio.Reader, error) {
 		if conn != nil {
-			return conn, nil
+			return conn, rbuf, nil
 		}
-		leftover = leftover[:0]
 		c, err := openTLS(serverAddr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		conn = c
-		return conn, nil
+		rbuf = bufio.NewReaderSize(c, 1<<20) // 1 MB — holds ~128k pipelined responses
+		return conn, rbuf, nil
 	}
 	defer func() {
+		m.flush(local)
 		if conn != nil {
 			_ = conn.Close()
 		}
 	}()
 
 	writeBurst := func(c net.Conn, n int) error {
-		_ = c.SetDeadline(time.Now().Add(ioTimeout))
 		writeBuf = writeBuf[:0]
 		for i := 0; i < n; i++ {
 			writeBuf = append(writeBuf, reqLine...)
@@ -523,7 +495,7 @@ func runWorker(
 			if stop.Load() || time.Now().After(deadline) {
 				return
 			}
-			c, err := ensure()
+			c, r, err := ensure()
 			if err != nil {
 				time.Sleep(50 * time.Millisecond)
 				continue
@@ -533,29 +505,30 @@ func runWorker(
 			if burst > pipelineDepth {
 				burst = pipelineDepth
 			}
+
+			_ = c.SetWriteDeadline(time.Now().Add(ioTimeout))
 			if err := writeBurst(c, burst); err != nil {
 				_ = c.Close()
 				conn = nil
-				leftover = leftover[:0]
+				rbuf = nil
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
 
+			_ = c.SetReadDeadline(time.Now().Add(ioTimeout * time.Duration(burst/500+2)))
 			failed := false
 			for i := 0; i < burst; i++ {
-				if stop.Load() || time.Now().After(deadline) {
-					return
-				}
-				line, err := readResponseLine(c, &leftover)
+				line, err := r.ReadString('\n')
 				if err != nil {
 					_ = c.Close()
 					conn = nil
-					leftover = leftover[:0]
+					rbuf = nil
 					failed = true
 					break
 				}
-				m.record(classifyResponse(line))
+				local[classifyResponse(line)]++
 			}
+			m.flush(local)
 			if failed {
 				time.Sleep(50 * time.Millisecond)
 				continue
