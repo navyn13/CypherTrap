@@ -11,7 +11,7 @@ type Algorithm interface {
 
 type fixedWindowAlgorithm struct {
 	config  fixedWindowConfig
-	batcher *checkBatcher
+	batcher *CheckBatcher
 }
 
 type fixedWindowConfig struct {
@@ -19,7 +19,7 @@ type fixedWindowConfig struct {
 	WindowMs int `json:"windowMs"`
 }
 
-func NewFixedWindowAlgorithm(config fixedWindowConfig, batcher *checkBatcher) Algorithm {
+func NewFixedWindowAlgorithm(config fixedWindowConfig, batcher *CheckBatcher) Algorithm {
 	return &fixedWindowAlgorithm{
 		config:  config,
 		batcher: batcher,
@@ -28,10 +28,10 @@ func NewFixedWindowAlgorithm(config fixedWindowConfig, batcher *checkBatcher) Al
 
 func (a *fixedWindowAlgorithm) Check(ip, companyName, keyName string) bool {
 	key := ip + companyName + keyName
-	return a.batcher.submit(key, a.config.Limit, a.config.WindowMs)
+	return a.batcher.Submit(key, a.config.Limit, a.config.WindowMs)
 }
 
-func NewAlgorithmFromDB(name string, config json.RawMessage, batcher *checkBatcher) (Algorithm, error) {
+func NewAlgorithmFromDB(name string, config json.RawMessage, batcher *CheckBatcher) (Algorithm, error) {
 	switch name {
 	case "fixed_window":
 		var fixedWindowConfig fixedWindowConfig

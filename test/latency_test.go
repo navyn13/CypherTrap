@@ -1,4 +1,4 @@
-package ratelimit
+package test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/navyn13/CypherTrap/internal/ratelimit"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -41,8 +42,8 @@ func TestCompareCheckLatency(t *testing.T) {
 	defer rdb.Close()
 
 	const (
-		limit    = 1_000_000
-		windowMs = 60_000
+		limit     = 1_000_000
+		windowMs  = 60_000
 		perWorker = 200
 	)
 	concurrencies := []int{1, 8, 64, 256}
@@ -62,7 +63,7 @@ func TestCompareCheckLatency(t *testing.T) {
 		fmt.Printf("  WITH    chunk (batcher):      p50=%6s  p95=%6s  p99=%6s  mean=%6s\n",
 			fmtDur(with.p50), fmtDur(with.p95), fmtDur(with.p99), fmtDur(with.mean))
 		fmt.Printf("  Redis RTTs (approx):          without=%d  with≈%d  (chunk=%d)\n",
-			n*perWorker, (n*perWorker+checkChunkSize-1)/checkChunkSize, checkChunkSize)
+			n*perWorker, (n*perWorker+ratelimit.CheckChunkSize-1)/ratelimit.CheckChunkSize, ratelimit.CheckChunkSize)
 		fmt.Println()
 	}
 }
@@ -119,7 +120,7 @@ func measureDirect(t *testing.T, rdb *redis.Client, workers, perWorker, limit, w
 
 func measureBatched(t *testing.T, rdb *redis.Client, workers, perWorker, limit, windowMs int) latStats {
 	t.Helper()
-	b := newCheckBatcher(rdb)
+	b := ratelimit.NewCheckBatcher(rdb)
 	samples := make([]time.Duration, workers*perWorker)
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -129,7 +130,7 @@ func measureBatched(t *testing.T, rdb *redis.Client, workers, perWorker, limit, 
 			for i := 0; i < perWorker; i++ {
 				key := fmt.Sprintf("lat:batch:%d:%d", w, i)
 				start := time.Now()
-				_ = b.submit(key, limit, windowMs)
+				_ = b.Submit(key, limit, windowMs)
 				samples[w*perWorker+i] = time.Since(start)
 			}
 		}(w)

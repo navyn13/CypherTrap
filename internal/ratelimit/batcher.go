@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	checkChunkSize = 64
+	CheckChunkSize = 64
 	checkMaxWait   = 100 * time.Microsecond
 )
 
@@ -41,8 +41,8 @@ type checkRequest struct {
 	reply    chan bool
 }
 
-// checkBatcher coalesces concurrent Check calls into chunked Redis EVALSHA round trips.
-type checkBatcher struct {
+// CheckBatcher coalesces concurrent Check calls into chunked Redis EVALSHA round trips.
+type CheckBatcher struct {
 	rdb *redis.Client
 	ch  chan checkRequest
 }
@@ -53,16 +53,16 @@ var replyPool = sync.Pool{
 	},
 }
 
-func newCheckBatcher(rdb *redis.Client) *checkBatcher {
-	b := &checkBatcher{
+func NewCheckBatcher(rdb *redis.Client) *CheckBatcher {
+	b := &CheckBatcher{
 		rdb: rdb,
-		ch:  make(chan checkRequest, checkChunkSize*8),
+		ch:  make(chan checkRequest, CheckChunkSize*8),
 	}
 	go b.loop()
 	return b
 }
 
-func (b *checkBatcher) submit(key string, limit, windowMs int) bool {
+func (b *CheckBatcher) Submit(key string, limit, windowMs int) bool {
 	reply := replyPool.Get().(chan bool)
 	b.ch <- checkRequest{key: key, limit: limit, windowMs: windowMs, reply: reply}
 	ok := <-reply
@@ -75,8 +75,8 @@ func (b *checkBatcher) submit(key string, limit, windowMs int) bool {
 	return ok
 }
 
-func (b *checkBatcher) loop() {
-	buf := make([]checkRequest, 0, checkChunkSize)
+func (b *CheckBatcher) loop() {
+	buf := make([]checkRequest, 0, CheckChunkSize)
 	timer := time.NewTimer(checkMaxWait)
 	if !timer.Stop() {
 		<-timer.C
@@ -96,7 +96,7 @@ func (b *checkBatcher) loop() {
 
 		// Opportunistically drain ready requests up to chunk size.
 	drain:
-		for len(buf) < checkChunkSize {
+		for len(buf) < CheckChunkSize {
 			select {
 			case req := <-b.ch:
 				buf = append(buf, req)
@@ -105,14 +105,14 @@ func (b *checkBatcher) loop() {
 			}
 		}
 
-		if len(buf) >= checkChunkSize {
+		if len(buf) >= CheckChunkSize {
 			flush()
 			continue
 		}
 
 		timer.Reset(checkMaxWait)
 	wait:
-		for len(buf) < checkChunkSize {
+		for len(buf) < CheckChunkSize {
 			select {
 			case req := <-b.ch:
 				buf = append(buf, req)
@@ -130,7 +130,7 @@ func (b *checkBatcher) loop() {
 	}
 }
 
-func (b *checkBatcher) flush(batch []checkRequest) {
+func (b *CheckBatcher) flush(batch []checkRequest) {
 	// Group by (limit, windowMs) so each Lua call uses a single shared config.
 	type cfgKey struct {
 		limit    int

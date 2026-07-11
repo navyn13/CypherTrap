@@ -1,6 +1,6 @@
 //go:build integration
 
-package stress
+package test
 
 import (
 	"bufio"

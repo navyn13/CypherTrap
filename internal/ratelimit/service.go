@@ -23,7 +23,7 @@ type localCacheEntry struct {
 type Service struct {
 	db         *pgxpool.Pool
 	rdb        *redis.Client
-	batcher    *checkBatcher
+	batcher    *CheckBatcher
 	localCache sync.Map // map[string]localCacheEntry
 }
 
@@ -31,7 +31,7 @@ func NewService(db *pgxpool.Pool, rdb *redis.Client) *Service {
 	return &Service{
 		db:      db,
 		rdb:     rdb,
-		batcher: newCheckBatcher(rdb),
+		batcher: NewCheckBatcher(rdb),
 	}
 }
 

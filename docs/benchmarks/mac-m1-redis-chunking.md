@@ -4,7 +4,7 @@
 **OS:** macOS 14.6.1 (Build 23G93) / Darwin 23.6.0  
 **Redis:** 8.4.0 on `localhost:6379` (same machine)  
 **Date:** 2026-07-11  
-**Code:** `internal/ratelimit` chunked batcher (`checkChunkSize=64`, `checkMaxWait=100µs`)
+**Code:** `internal/ratelimit` chunked batcher (`CheckChunkSize=64`, `checkMaxWait=100µs`)
 
 ## What was measured
 
@@ -20,7 +20,7 @@ Samples: **200 checks per worker**. Percentiles are over all samples for that co
 Reproduce:
 
 ```bash
-REDIS_URL=redis://localhost:6379 go test ./internal/ratelimit/ -run TestCompareCheckLatency -v -count=1
+REDIS_URL=redis://localhost:6379 go test ./test/ -run TestCompareCheckLatency -v -count=1
 ```
 
 ## Results (Apple M1)
@@ -87,5 +87,6 @@ REDIS_URL=redis://localhost:6379 go test ./internal/ratelimit/ -run TestCompareC
 ## Related code
 
 - [`internal/ratelimit/batcher.go`](../../internal/ratelimit/batcher.go) — chunk batcher + multi-key Lua
-- [`internal/ratelimit/algorithm.go`](../../internal/ratelimit/algorithm.go) — `Check` → `batcher.submit`
-- [`internal/ratelimit/latency_test.go`](../../internal/ratelimit/latency_test.go) — `TestCompareCheckLatency`
+- [`internal/ratelimit/algorithm.go`](../../internal/ratelimit/algorithm.go) — `Check` → `batcher.Submit`
+- [`test/latency_test.go`](../../test/latency_test.go) — `TestCompareCheckLatency`
+- [`test/allow_test.go`](../../test/allow_test.go) — ALLOW stress (`go test -tags=integration ./test/`)
