@@ -23,13 +23,15 @@ type localCacheEntry struct {
 type Service struct {
 	db         *pgxpool.Pool
 	rdb        *redis.Client
+	batcher    *checkBatcher
 	localCache sync.Map // map[string]localCacheEntry
 }
 
 func NewService(db *pgxpool.Pool, rdb *redis.Client) *Service {
 	return &Service{
-		db:  db,
-		rdb: rdb,
+		db:      db,
+		rdb:     rdb,
+		batcher: newCheckBatcher(rdb),
 	}
 }
 
@@ -57,7 +59,7 @@ func (s *Service) LookupAlgorithmAndConfig(companyName, keyName, policyName stri
 		if err := json.Unmarshal([]byte(cached), &policy); err != nil {
 			return nil, fmt.Errorf("unmarshal cached policy: %w", err)
 		}
-		algo, err := NewAlgorithmFromDB(policy.Algorithm, policy.Config, s.rdb)
+		algo, err := NewAlgorithmFromDB(policy.Algorithm, policy.Config, s.batcher)
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +79,7 @@ func (s *Service) LookupAlgorithmAndConfig(companyName, keyName, policyName stri
 		s.rdb.Set(ctx, cacheKey, data, policyCacheTTL).Err()
 	}
 
-	algo, err := NewAlgorithmFromDB(policy.Algorithm, policy.Config, s.rdb)
+	algo, err := NewAlgorithmFromDB(policy.Algorithm, policy.Config, s.batcher)
 	if err != nil {
 		return nil, err
 	}

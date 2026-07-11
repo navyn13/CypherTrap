@@ -1,11 +1,8 @@
 package ratelimit
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type Algorithm interface {
@@ -13,8 +10,8 @@ type Algorithm interface {
 }
 
 type fixedWindowAlgorithm struct {
-	config fixedWindowConfig
-	rdb    *redis.Client
+	config  fixedWindowConfig
+	batcher *checkBatcher
 }
 
 type fixedWindowConfig struct {
@@ -22,55 +19,26 @@ type fixedWindowConfig struct {
 	WindowMs int `json:"windowMs"`
 }
 
-// fixedWindowScript returns 1 when allowed, 0 when blocked.
-var fixedWindowScript = redis.NewScript(`
-	local current = redis.call('INCR', KEYS[1])
-
-	if current == 1 then
-		redis.call('PEXPIRE', KEYS[1], ARGV[2])
-	end
-
-	if current > tonumber(ARGV[1]) then
-		return 0
-	end
-
-	return 1
-`)
-
-func NewFixedWindowAlgorithm(config fixedWindowConfig, rdb *redis.Client) Algorithm {
+func NewFixedWindowAlgorithm(config fixedWindowConfig, batcher *checkBatcher) Algorithm {
 	return &fixedWindowAlgorithm{
-		config: config,
-		rdb:    rdb,
+		config:  config,
+		batcher: batcher,
 	}
 }
 
 func (a *fixedWindowAlgorithm) Check(ip, companyName, keyName string) bool {
-	limit := a.config.Limit
-	windowMs := a.config.WindowMs
 	key := ip + companyName + keyName
-
-	result, err := fixedWindowScript.Run(
-		context.Background(),
-		a.rdb,
-		[]string{key},
-		limit,
-		windowMs,
-	).Int()
-	if err != nil {
-		return false
-	}
-
-	return result == 1
+	return a.batcher.submit(key, a.config.Limit, a.config.WindowMs)
 }
 
-func NewAlgorithmFromDB(name string, config json.RawMessage, rdb *redis.Client) (Algorithm, error) {
+func NewAlgorithmFromDB(name string, config json.RawMessage, batcher *checkBatcher) (Algorithm, error) {
 	switch name {
 	case "fixed_window":
 		var fixedWindowConfig fixedWindowConfig
 		if err := json.Unmarshal(config, &fixedWindowConfig); err != nil {
 			return nil, fmt.Errorf("unmarshal fixed window config: %w", err)
 		}
-		return NewFixedWindowAlgorithm(fixedWindowConfig, rdb), nil
+		return NewFixedWindowAlgorithm(fixedWindowConfig, batcher), nil
 	default:
 		return nil, fmt.Errorf("unknown algorithm: %s", name)
 	}

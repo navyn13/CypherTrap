@@ -49,6 +49,12 @@ CypherTrap intercepts every request before it reaches your backend. Blocked requ
 
 ---
 
+## Benchmarks
+
+Measured on **Apple M1** (MacBook Air, 8 GB, macOS 14.6.1). See [docs/benchmarks](./docs/benchmarks/) for Redis `Check` latency **with vs without chunking**.
+
+---
+
 ## Quick Start
 
 ### Install
