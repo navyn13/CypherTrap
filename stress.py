@@ -368,7 +368,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server", default=os.environ.get("CYPHER_SERVER", "localhost:7878"))
     parser.add_argument("-c", "--company", default=os.environ.get("CYPHER_COMPANY"))
     parser.add_argument("-k", "--key-name", default=os.environ.get("CYPHER_KEY_NAME"))
-    parser.add_argument("-a", "--api-key", default=os.environ.get("CYPHER_API_KEY"))
+    parser.add_argument(
+        "-a",
+        "--api-key",
+        default=os.environ.get(
+            "CYPHER_API_KEY",
+            "rls_6780eb36cd5328b90272d5d4c7212250fbc4e60385b3ed87",
+        ),
+    )
     parser.add_argument("-p", "--policy", default=os.environ.get("CYPHER_POLICY"))
     parser.add_argument(
         "--calls",
