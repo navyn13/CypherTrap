@@ -3,14 +3,22 @@ package server
 import (
 	"log/slog"
 	"strings"
-	"time"
+)
+
+var (
+	respInvalid      = []byte("INVALID MESSAGE\n")
+	respUnauthorized = []byte("UNAUTHORIZED\n")
+	respInternal     = []byte("INTERNAL SERVER ERROR\n")
+	respAllowed      = []byte("ALLOWED\n")
+	respBlocked      = []byte("BLOCKED\n")
+	respUnknown      = []byte("UNKNOWN COMMAND\n")
 )
 
 func (s *Server) handleMessage(msg Message) error {
 	parts := strings.Fields(msg.Msg)
 
 	if len(parts) != 6 {
-		msg.Peer.Send([]byte("INVALID MESSAGE\n"))
+		msg.Peer.Send(respInvalid)
 		return nil
 	}
 	command := parts[0]
@@ -20,66 +28,35 @@ func (s *Server) handleMessage(msg Message) error {
 	api_key := parts[4]
 	policyName := parts[5]
 
-	totalStart := time.Now()
-
-	verifyStart := time.Now()
 	isVerified := s.authService.VerifyAPIKey(companyName, key_name, api_key)
-	verifyDur := time.Since(verifyStart)
 	if !isVerified {
-		slog.Info("ALLOW process timings",
-			"VerifyAPIKey", verifyDur,
-			"LookupAlgorithmAndConfig", time.Duration(0),
-			"RateLimiterCheck", time.Duration(0),
-			"total", time.Since(totalStart),
-			"result", "UNAUTHORIZED",
-		)
-		msg.Peer.Send([]byte("UNAUTHORIZED\n"))
+		msg.Peer.Send(respUnauthorized)
 		return nil
 	}
 
-	lookupStart := time.Now()
 	algorithm, err := s.ratelimitService.LookupAlgorithmAndConfig(companyName, key_name, policyName)
-	lookupDur := time.Since(lookupStart)
 	if err != nil {
-		slog.Info("ALLOW process timings",
-			"VerifyAPIKey", verifyDur,
-			"LookupAlgorithmAndConfig", lookupDur,
-			"RateLimiterCheck", time.Duration(0),
-			"total", time.Since(totalStart),
-			"result", "INTERNAL SERVER ERROR",
-		)
-		msg.Peer.Send([]byte("INTERNAL SERVER ERROR\n"))
+		msg.Peer.Send(respInternal)
 		return nil
 	}
 
 	switch command {
 	case "ALLOW":
-		checkStart := time.Now()
-		allowed := algorithm.Check(ip, companyName, key_name)
-		checkDur := time.Since(checkStart)
-
-		result := "BLOCKED"
-		if allowed {
-			result = "ALLOWED"
-			msg.Peer.Send([]byte("ALLOWED\n"))
+		if algorithm.Check(ip, companyName, key_name) {
+			msg.Peer.Send(respAllowed)
 		} else {
-			msg.Peer.Send([]byte("BLOCKED\n"))
+			msg.Peer.Send(respBlocked)
 		}
-
-		slog.Info("ALLOW process timings",
-			"VerifyAPIKey", verifyDur,
-			"LookupAlgorithmAndConfig", lookupDur,
-			"RateLimiterCheck", checkDur,
-			"total", time.Since(totalStart),
-			"result", result,
-		)
 	default:
-		msg.Peer.Send([]byte("UNKNOWN COMMAND\n"))
+		msg.Peer.Send(respUnknown)
 	}
 	return nil
 }
 
-const messageWorkerCount = 8
+const (
+	messageWorkerCount = 256
+	messageQueueSize   = 8192
+)
 
 func (s *Server) peerLoop() {
 	for {

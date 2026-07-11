@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -14,20 +12,30 @@ type Algorithm interface {
 	Check(ip, companyName, keyName string) bool
 }
 
-type blockedCacheEntry struct {
-	expiresAt time.Time
-}
-
 type fixedWindowAlgorithm struct {
-	config       fixedWindowConfig
-	rdb          *redis.Client
-	blockedCache sync.Map // map[string]blockedCacheEntry — L1
+	config fixedWindowConfig
+	rdb    *redis.Client
 }
 
 type fixedWindowConfig struct {
 	Limit    int `json:"limit"`
 	WindowMs int `json:"windowMs"`
 }
+
+// fixedWindowScript returns 1 when allowed, 0 when blocked.
+var fixedWindowScript = redis.NewScript(`
+	local current = redis.call('INCR', KEYS[1])
+
+	if current == 1 then
+		redis.call('PEXPIRE', KEYS[1], ARGV[2])
+	end
+
+	if current > tonumber(ARGV[1]) then
+		return 0
+	end
+
+	return 1
+`)
 
 func NewFixedWindowAlgorithm(config fixedWindowConfig, rdb *redis.Client) Algorithm {
 	return &fixedWindowAlgorithm{
@@ -41,58 +49,18 @@ func (a *fixedWindowAlgorithm) Check(ip, companyName, keyName string) bool {
 	windowMs := a.config.WindowMs
 	key := ip + companyName + keyName
 
-	// L1: local blocked cache
-	if a.localBlocked(key) {
-		return false
-	}
-
-	// L2: Redis fixed-window counter
-	ttlMs, err := a.rdb.Eval(context.Background(), `
-		local current = redis.call('INCR', KEYS[1])
-
-		-- First request in this window
-		if current == 1 then
-			redis.call('PEXPIRE', KEYS[1], ARGV[2])
-		end
-
-		-- Exceeded limit: return remaining TTL (ms) so callers can cache the block
-		if current > tonumber(ARGV[1]) then
-			local ttl = redis.call('PTTL', KEYS[1])
-			if ttl < 0 then
-				ttl = tonumber(ARGV[2])
-			end
-			return ttl
-		end
-
-		-- Allowed
-		return 0
-	`, []string{key}, limit, windowMs).Int()
-
+	result, err := fixedWindowScript.Run(
+		context.Background(),
+		a.rdb,
+		[]string{key},
+		limit,
+		windowMs,
+	).Int()
 	if err != nil {
 		return false
 	}
 
-	if ttlMs > 0 {
-		a.blockedCache.Store(key, blockedCacheEntry{
-			expiresAt: time.Now().Add(time.Duration(ttlMs) * time.Millisecond),
-		})
-		return false
-	}
-
-	return true
-}
-
-func (a *fixedWindowAlgorithm) localBlocked(key string) bool {
-	v, ok := a.blockedCache.Load(key)
-	if !ok {
-		return false
-	}
-	entry := v.(blockedCacheEntry)
-	if time.Now().After(entry.expiresAt) {
-		a.blockedCache.Delete(key)
-		return false
-	}
-	return true
+	return result == 1
 }
 
 func NewAlgorithmFromDB(name string, config json.RawMessage, rdb *redis.Client) (Algorithm, error) {

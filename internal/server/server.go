@@ -34,7 +34,7 @@ func NewServer(cfg config.Config, rdb *redis.Client, db *pgxpool.Pool) *Server {
 		addPeerCh:        make(chan *Peer),
 		peers:            make(map[*Peer]bool),
 		quitCh:           make(chan struct{}),
-		msgCh:            make(chan Message),
+		msgCh:            make(chan Message, messageQueueSize),
 		authService:      auth.NewService(db, rdb),
 		ratelimitService: ratelimit.NewService(db, rdb),
 	}

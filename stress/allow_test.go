@@ -30,6 +30,7 @@ const (
 	secondGrowth     = 2
 	maxReqsPerSecond = 6400
 	ioTimeout        = time.Second
+	pipelineDepth    = 1024 // in-flight ALLOW requests per connection
 )
 
 type config struct {
@@ -406,16 +407,37 @@ func sendAllow(conn net.Conn, clientIP, company, keyName, apiKey, policy string)
 	if _, err := conn.Write([]byte(allowLine(clientIP, company, keyName, apiKey, policy))); err != nil {
 		return "", err
 	}
+	return readResponseLine(conn, nil)
+}
 
+// readResponseLine reads one newline-terminated response. leftover holds any
+// leftover bytes from a previous read (pipelined responses may arrive together).
+func readResponseLine(conn net.Conn, leftover *[]byte) (string, error) {
 	var buf []byte
-	tmp := make([]byte, 256)
+	if leftover != nil && len(*leftover) > 0 {
+		buf = append(buf, (*leftover)...)
+		*leftover = (*leftover)[:0]
+		if i := indexByte(buf, '\n'); i >= 0 {
+			line := strings.TrimSpace(string(buf[:i]))
+			if i+1 < len(buf) {
+				*leftover = append(*leftover, buf[i+1:]...)
+			}
+			return line, nil
+		}
+	}
+
+	tmp := make([]byte, 4096)
 	for {
 		_ = conn.SetDeadline(time.Now().Add(ioTimeout))
 		n, err := conn.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
-			if i := strings.IndexByte(string(buf), '\n'); i >= 0 {
-				return strings.TrimSpace(string(buf[:i])), nil
+			if i := indexByte(buf, '\n'); i >= 0 {
+				line := strings.TrimSpace(string(buf[:i]))
+				if leftover != nil && i+1 < len(buf) {
+					*leftover = append((*leftover)[:0], buf[i+1:]...)
+				}
+				return line, nil
 			}
 		}
 		if err != nil {
@@ -425,6 +447,15 @@ func sendAllow(conn net.Conn, clientIP, company, keyName, apiKey, policy string)
 			return "", err
 		}
 	}
+}
+
+func indexByte(b []byte, c byte) int {
+	for i := range b {
+		if b[i] == c {
+			return i
+		}
+	}
+	return -1
 }
 
 func runWorker(
@@ -442,12 +473,16 @@ func runWorker(
 	if durationSec < 1 {
 		durationSec = 1
 	}
+	reqLine := []byte(allowLine(clientIP, company, keyName, apiKey, policy))
+	writeBuf := make([]byte, 0, len(reqLine)*pipelineDepth)
 
 	var conn net.Conn
+	var leftover []byte
 	ensure := func() (net.Conn, error) {
 		if conn != nil {
 			return conn, nil
 		}
+		leftover = leftover[:0]
 		c, err := openTLS(serverAddr)
 		if err != nil {
 			return nil, err
@@ -461,6 +496,16 @@ func runWorker(
 		}
 	}()
 
+	writeBurst := func(c net.Conn, n int) error {
+		_ = c.SetDeadline(time.Now().Add(ioTimeout))
+		writeBuf = writeBuf[:0]
+		for i := 0; i < n; i++ {
+			writeBuf = append(writeBuf, reqLine...)
+		}
+		_, err := c.Write(writeBuf)
+		return err
+	}
+
 	for second := 0; second < durationSec; second++ {
 		if stop.Load() {
 			return
@@ -473,8 +518,8 @@ func runWorker(
 			return
 		}
 
-		batch := requestsForSecond(second, baseReqs)
-		for i := 0; i < batch; i++ {
+		remaining := requestsForSecond(second, baseReqs)
+		for remaining > 0 {
 			if stop.Load() || time.Now().After(deadline) {
 				return
 			}
@@ -483,14 +528,39 @@ func runWorker(
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
-			line, err := sendAllow(c, clientIP, company, keyName, apiKey, policy)
-			if err != nil {
+
+			burst := remaining
+			if burst > pipelineDepth {
+				burst = pipelineDepth
+			}
+			if err := writeBurst(c, burst); err != nil {
 				_ = c.Close()
 				conn = nil
+				leftover = leftover[:0]
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
-			m.record(classifyResponse(line))
+
+			failed := false
+			for i := 0; i < burst; i++ {
+				if stop.Load() || time.Now().After(deadline) {
+					return
+				}
+				line, err := readResponseLine(c, &leftover)
+				if err != nil {
+					_ = c.Close()
+					conn = nil
+					leftover = leftover[:0]
+					failed = true
+					break
+				}
+				m.record(classifyResponse(line))
+			}
+			if failed {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			remaining -= burst
 		}
 	}
 }
