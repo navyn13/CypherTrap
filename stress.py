@@ -366,8 +366,8 @@ def run_worker(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CypherTrap 5-minute TLS stress test")
     parser.add_argument("--server", default=os.environ.get("CYPHER_SERVER", "localhost:7878"))
-    parser.add_argument("-c", "--company", default=os.environ.get("CYPHER_COMPANY"))
-    parser.add_argument("-k", "--key-name", default=os.environ.get("CYPHER_KEY_NAME"))
+    parser.add_argument("-c", "--company", default=os.environ.get("CYPHER_COMPANY", "admin"))
+    parser.add_argument("-k", "--key-name", default=os.environ.get("CYPHER_KEY_NAME", "login"))
     parser.add_argument(
         "-a",
         "--api-key",
@@ -376,7 +376,7 @@ def parse_args() -> argparse.Namespace:
             "rls_6780eb36cd5328b90272d5d4c7212250fbc4e60385b3ed87",
         ),
     )
-    parser.add_argument("-p", "--policy", default=os.environ.get("CYPHER_POLICY"))
+    parser.add_argument("-p", "--policy", default=os.environ.get("CYPHER_POLICY", "free"))
     parser.add_argument(
         "--calls",
         type=int,
