@@ -17,10 +17,10 @@ End-to-end wait from the **caller** submitting a fixed-window rate-limit check u
 
 Samples: **200 checks per worker**. Percentiles are over all samples for that concurrency.
 
-Reproduce:
+Reproduce (historical; latency harness removed — numbers below from 2026-07-11 Mac M1 run):
 
 ```bash
-REDIS_URL=redis://localhost:6379 go test ./test/ -run TestCompareCheckLatency -v -count=1
+# was: go test ./test/ -run TestCompareCheckLatency -v -count=1
 ```
 
 ## Results (Apple M1)
@@ -88,5 +88,4 @@ REDIS_URL=redis://localhost:6379 go test ./test/ -run TestCompareCheckLatency -v
 
 - [`internal/ratelimit/batcher.go`](../../internal/ratelimit/batcher.go) — chunk batcher + multi-key Lua
 - [`internal/ratelimit/algorithm.go`](../../internal/ratelimit/algorithm.go) — `Check` → `batcher.Submit`
-- [`test/latency_test.go`](../../test/latency_test.go) — `TestCompareCheckLatency`
 - [`test/allow_test.go`](../../test/allow_test.go) — ALLOW stress (`go test -tags=integration ./test/`)
